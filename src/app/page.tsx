@@ -125,15 +125,15 @@ const STEP_CONFIG: Record<AuthStep, StepConfig> = {
 export default function Home() {
   const [step, setStep] = useState<AuthStep>("IDENTITY");
   const [, setIdentityData] = useState<IdentityData | null>(null);
-  const [, setDocumentFile] = useState<File | null>(null);
+  const [, setDocumentImage] = useState<string | null>(null);
 
   const handleIdentitySubmit = (data: IdentityData) => {
     setIdentityData(data);
     setStep("DOCUMENT");
   };
 
-  const handleDocumentSubmit = (file: File) => {
-    setDocumentFile(file);
+  const handleDocumentSubmit = (imageData: string) => {
+    setDocumentImage(imageData);
     setStep("LIVENESS");
   };
 
