@@ -2,15 +2,15 @@
 
 import { useState } from "react";
 import { IdentityStepForm } from "@/components/auth-wizard/IdentityStepForm";
+import { DocumentStepForm } from "@/components/auth-wizard/DocumentStepForm";
 
 type AuthStep = "IDENTITY" | "DOCUMENT" | "LIVENESS";
 
 interface IdentityData {
-  documentType: "CC" | "CE" | "PAS" | "";
+  documentType: "CC";
   documentNumber: string;
   phoneNumber: string;
 }
-
 
 function StepBadge({ currentStep, totalSteps }: { currentStep: number; totalSteps: number }) {
   return (
@@ -51,6 +51,25 @@ function ShieldIcon() {
   );
 }
 
+function DocumentIcon() {
+  return (
+    <svg
+      className="w-8 h-8 text-cyan-400"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.5}
+        d="M15 9h3.75M15 12h3.75M15 15h3.75M4.5 19.5h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5zm6-10.125a1.875 1.875 0 11-3.75 0 1.875 1.875 0 013.75 0zm1.294 6.336a6.721 6.721 0 01-3.17.789 6.721 6.721 0 01-3.168-.789 3.376 3.376 0 016.338 0z"
+      />
+    </svg>
+  );
+}
+
 function LockIcon() {
   return (
     <svg
@@ -70,15 +89,6 @@ function LockIcon() {
   );
 }
 
-function DocumentStep() {
-  return (
-    <div className="text-center py-12">
-      <h2 className="text-xl font-semibold text-white mb-4">Verificación de Documento</h2>
-      <p className="text-slate-400">Próximamente: captura de documento de identidad</p>
-    </div>
-  );
-}
-
 function LivenessStep() {
   return (
     <div className="text-center py-12">
@@ -88,13 +98,43 @@ function LivenessStep() {
   );
 }
 
+interface StepConfig {
+  title: string;
+  subtitle: string;
+  icon: React.ReactNode;
+}
+
+const STEP_CONFIG: Record<AuthStep, StepConfig> = {
+  IDENTITY: {
+    title: "Verificación de identidad",
+    subtitle: "Ingresa tu identificación y teléfono para iniciar el proceso de autenticación segura.",
+    icon: <ShieldIcon />,
+  },
+  DOCUMENT: {
+    title: "Sube una foto de tu documento",
+    subtitle: "Asegúrate de que esté enfocado, sin brillos y completamente visible.",
+    icon: <DocumentIcon />,
+  },
+  LIVENESS: {
+    title: "Verificación biométrica",
+    subtitle: "Realizaremos una prueba de vida para confirmar tu identidad.",
+    icon: <ShieldIcon />,
+  },
+};
+
 export default function Home() {
   const [step, setStep] = useState<AuthStep>("IDENTITY");
   const [, setIdentityData] = useState<IdentityData | null>(null);
+  const [, setDocumentFile] = useState<File | null>(null);
 
   const handleIdentitySubmit = (data: IdentityData) => {
     setIdentityData(data);
     setStep("DOCUMENT");
+  };
+
+  const handleDocumentSubmit = (file: File) => {
+    setDocumentFile(file);
+    setStep("LIVENESS");
   };
 
   const getCurrentStepNumber = (): number => {
@@ -102,54 +142,49 @@ export default function Home() {
     return steps.indexOf(step) + 1;
   };
 
+  const currentConfig = STEP_CONFIG[step];
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4 sm:p-6 lg:p-8">
-      {/* Decorative background elements */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-40 -right-40 w-80 h-80 bg-cyan-500/5 rounded-full blur-3xl" />
         <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-blue-500/5 rounded-full blur-3xl" />
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-gradient-radial from-cyan-500/3 to-transparent rounded-full" />
       </div>
 
-      {/* Main Card */}
       <div className="relative w-full max-w-md">
-        {/* Card glow effect */}
         <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500/20 via-blue-500/20 to-cyan-500/20 rounded-2xl blur opacity-50" />
         
         <div className="relative bg-slate-900/90 backdrop-blur-xl rounded-2xl border border-slate-700/50 shadow-2xl shadow-black/50 overflow-hidden">
-          {/* Card Header */}
           <div className="px-6 pt-8 pb-6 border-b border-slate-700/50">
             <div className="flex flex-col items-center text-center space-y-4">
-              {/* Step Badge */}
               <StepBadge currentStep={getCurrentStepNumber()} totalSteps={3} />
               
-              {/* Icon */}
               <div className="p-3 rounded-full bg-gradient-to-br from-cyan-500/20 to-blue-500/20 border border-cyan-500/20">
-                <ShieldIcon />
+                {currentConfig.icon}
               </div>
 
-              {/* Title */}
               <div className="space-y-2">
                 <h1 className="text-2xl font-bold text-white tracking-tight">
-                  Verificación de identidad
+                  {currentConfig.title}
                 </h1>
                 <p className="text-sm text-slate-400 leading-relaxed max-w-sm">
-                  Ingresa tu identificación y teléfono para iniciar el proceso de autenticación segura.
+                  {currentConfig.subtitle}
                 </p>
               </div>
             </div>
           </div>
 
-          {/* Card Body */}
           <div className="px-6 py-6">
             {step === "IDENTITY" && (
               <IdentityStepForm onSubmitSuccess={handleIdentitySubmit} />
             )}
-            {step === "DOCUMENT" && <DocumentStep />}
+            {step === "DOCUMENT" && (
+              <DocumentStepForm onSubmitSuccess={handleDocumentSubmit} />
+            )}
             {step === "LIVENESS" && <LivenessStep />}
           </div>
 
-          {/* Card Footer */}
           <div className="px-6 pb-6">
             <div className="flex items-center justify-center gap-2 text-xs text-slate-500 border-t border-slate-700/50 pt-6">
               <LockIcon />
@@ -160,7 +195,6 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Branding */}
         <div className="mt-6 text-center">
           <p className="text-xs text-slate-600">
             Banco de Bogotá © {new Date().getFullYear()} · Autenticación Segura
