@@ -6,8 +6,8 @@ export default function Home() {
       <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
         <Image
           className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
+          src="/ourhyt.svg"
+          alt="Ourhyt logo"
           width={100}
           height={20}
           priority
@@ -43,12 +43,12 @@ export default function Home() {
           >
             <Image
               className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
+              src="/ourhyt.svg"
+              alt="Ourhyt logo"
               width={16}
               height={16}
             />
-            Deploy Now
+            Go to Ourhyt
           </a>
           <a
             className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
