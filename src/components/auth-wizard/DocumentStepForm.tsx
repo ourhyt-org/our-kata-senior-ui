@@ -2,8 +2,13 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 
+interface DocumentImages {
+  front: string;
+  back: string;
+}
+
 interface DocumentStepFormProps {
-  onSubmitSuccess: (imageData: string) => void;
+  onSubmitSuccess: (images: DocumentImages) => void;
 }
 
 interface FormErrors {
@@ -11,7 +16,8 @@ interface FormErrors {
   capture?: string;
 }
 
-type CameraState = "idle" | "requesting" | "active" | "captured" | "error";
+type CameraState = "idle" | "requesting" | "active" | "error";
+type CaptureStep = "front" | "back" | "review";
 
 function CameraIcon({ className }: { className?: string }) {
   return (
@@ -76,7 +82,7 @@ function CheckCircleIcon({ className }: { className?: string }) {
   );
 }
 
-function VideoCameraIcon({ className }: { className?: string }) {
+function IdCardFrontIcon({ className }: { className?: string }) {
   return (
     <svg
       className={className}
@@ -89,7 +95,32 @@ function VideoCameraIcon({ className }: { className?: string }) {
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth={1.5}
-        d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z"
+        d="M15 9h3.75M15 12h3.75M15 15h3.75M4.5 19.5h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5zm6-10.125a1.875 1.875 0 11-3.75 0 1.875 1.875 0 013.75 0zm1.294 6.336a6.721 6.721 0 01-3.17.789 6.721 6.721 0 01-3.168-.789 3.376 3.376 0 016.338 0z"
+      />
+    </svg>
+  );
+}
+
+function IdCardBackIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.5}
+        d="M3.75 4.5h16.5M3.75 9h16.5m-16.5 4.5h16.5m-16.5 4.5h16.5"
+      />
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.5}
+        d="M4.5 19.5h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z"
       />
     </svg>
   );
@@ -108,12 +139,26 @@ function CaptureIcon({ className }: { className?: string }) {
   );
 }
 
+const CAPTURE_STEPS = {
+  front: {
+    title: "Foto frontal de la cédula",
+    instruction: "Captura la parte frontal donde aparece tu foto",
+    icon: IdCardFrontIcon,
+  },
+  back: {
+    title: "Foto del reverso de la cédula",
+    instruction: "Captura la parte trasera con el código de barras",
+    icon: IdCardBackIcon,
+  },
+};
+
 export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
   const [cameraState, setCameraState] = useState<CameraState>("idle");
-  const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [captureStep, setCaptureStep] = useState<CaptureStep>("front");
+  const [frontImage, setFrontImage] = useState<string | null>(null);
+  const [backImage, setBackImage] = useState<string | null>(null);
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [isLoading, setIsLoading] = useState(false);
-  const [facingMode, setFacingMode] = useState<"user" | "environment">("environment");
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -123,9 +168,6 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
     }
   }, []);
 
@@ -138,7 +180,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
 
       const constraints: MediaStreamConstraints = {
         video: {
-          facingMode: facingMode,
+          facingMode: "environment",
           width: { ideal: 1920 },
           height: { ideal: 1080 },
         },
@@ -150,9 +192,9 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-        setCameraState("active");
       }
+
+      setCameraState("active");
     } catch (error) {
       console.error("Error accessing camera:", error);
       setCameraState("error");
@@ -177,7 +219,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
         });
       }
     }
-  }, [facingMode, stopCamera]);
+  }, [stopCamera]);
 
   const capturePhoto = useCallback(() => {
     if (!videoRef.current || !canvasRef.current) return;
@@ -194,25 +236,29 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
     const imageData = canvas.toDataURL("image/jpeg", 0.9);
-    setCapturedImage(imageData);
-    setCameraState("captured");
-    stopCamera();
-  }, [stopCamera]);
 
-  const retakePhoto = useCallback(() => {
-    setCapturedImage(null);
+    if (captureStep === "front") {
+      setFrontImage(imageData);
+      setCaptureStep("back");
+    } else if (captureStep === "back") {
+      setBackImage(imageData);
+      setCaptureStep("review");
+      stopCamera();
+    }
+  }, [captureStep, stopCamera]);
+
+  const retakeFront = useCallback(() => {
+    setFrontImage(null);
+    setBackImage(null);
+    setCaptureStep("front");
     startCamera();
   }, [startCamera]);
 
-  const switchCamera = useCallback(() => {
-    setFacingMode((prev) => (prev === "user" ? "environment" : "user"));
-  }, []);
-
-  useEffect(() => {
-    if (cameraState === "active" && facingMode) {
-      startCamera();
-    }
-  }, [facingMode]);
+  const retakeBack = useCallback(() => {
+    setBackImage(null);
+    setCaptureStep("back");
+    startCamera();
+  }, [startCamera]);
 
   useEffect(() => {
     return () => {
@@ -220,9 +266,16 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
     };
   }, [stopCamera]);
 
+  useEffect(() => {
+    if (cameraState === "active" && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play()?.catch(console.error);
+    }
+  }, [cameraState]);
+
   const handleSubmit = async () => {
-    if (!capturedImage) {
-      setFormErrors({ capture: "Debes capturar una foto del documento" });
+    if (!frontImage || !backImage) {
+      setFormErrors({ capture: "Debes capturar ambas fotos del documento" });
       return;
     }
 
@@ -230,16 +283,44 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
 
     await new Promise((resolve) => setTimeout(resolve, 800));
 
-    console.log("Documento enviado", capturedImage.substring(0, 50) + "...");
-    onSubmitSuccess(capturedImage);
+    console.log("Documento enviado", { front: frontImage.substring(0, 50), back: backImage.substring(0, 50) });
+    onSubmitSuccess({ front: frontImage, back: backImage });
     setIsLoading(false);
   };
+
+  const currentStepConfig = captureStep !== "review" ? CAPTURE_STEPS[captureStep] : null;
+  const CurrentIcon = currentStepConfig?.icon || IdCardFrontIcon;
 
   return (
     <div className="space-y-6">
       <canvas ref={canvasRef} className="hidden" />
 
-      {cameraState === "idle" && (
+      {captureStep !== "review" && (
+        <div className="flex justify-center gap-3 mb-4">
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium ${
+            captureStep === "front" 
+              ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30" 
+              : frontImage 
+                ? "bg-green-500/20 text-green-400 border border-green-500/30"
+                : "bg-slate-700/50 text-slate-400 border border-slate-600/30"
+          }`}>
+            {frontImage ? <CheckCircleIcon className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5 flex items-center justify-center">1</span>}
+            Frontal
+          </div>
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium ${
+            captureStep === "back" 
+              ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30" 
+              : backImage 
+                ? "bg-green-500/20 text-green-400 border border-green-500/30"
+                : "bg-slate-700/50 text-slate-400 border border-slate-600/30"
+          }`}>
+            {backImage ? <CheckCircleIcon className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5 flex items-center justify-center">2</span>}
+            Reverso
+          </div>
+        </div>
+      )}
+
+      {cameraState === "idle" && captureStep !== "review" && (
         <div
           onClick={startCamera}
           className="
@@ -258,15 +339,15 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
         >
           <div className="flex flex-col items-center text-center space-y-4">
             <div className="p-4 rounded-full bg-slate-700/50 group-hover:bg-cyan-500/10 transition-colors duration-200">
-              <VideoCameraIcon className="w-10 h-10 text-slate-400 group-hover:text-cyan-400 transition-colors" />
+              <CurrentIcon className="w-10 h-10 text-slate-400 group-hover:text-cyan-400 transition-colors" />
             </div>
 
             <div className="space-y-2">
               <p className="text-base font-medium text-white">
-                Activa la cámara para fotografiar tu documento
+                {currentStepConfig?.title}
               </p>
               <p className="text-sm text-slate-400">
-                Asegúrate de tener buena iluminación y el documento completo en el encuadre
+                {currentStepConfig?.instruction}
               </p>
             </div>
 
@@ -294,7 +375,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
         <div className="rounded-xl border border-slate-600/50 bg-slate-800/30 p-8">
           <div className="flex flex-col items-center text-center space-y-4">
             <div className="p-4 rounded-full bg-cyan-500/20 animate-pulse">
-              <VideoCameraIcon className="w-10 h-10 text-cyan-400" />
+              <CameraIcon className="w-10 h-10 text-cyan-400" />
             </div>
             <div className="space-y-2">
               <p className="text-base font-medium text-white">Solicitando acceso a la cámara...</p>
@@ -343,7 +424,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
         </div>
       )}
 
-      {cameraState === "active" && (
+      {cameraState === "active" && captureStep !== "review" && (
         <div className="space-y-4">
           <div className="relative rounded-xl overflow-hidden border border-slate-600/50 bg-black">
             <div className="aspect-[4/3] relative">
@@ -356,7 +437,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
               />
 
               <div className="absolute inset-0 pointer-events-none">
-                <div className="absolute inset-8 border-2 border-white/30 rounded-lg">
+                <div className="absolute inset-6 sm:inset-8 border-2 border-white/30 rounded-lg">
                   <div className="absolute -top-0.5 -left-0.5 w-6 h-6 border-t-2 border-l-2 border-cyan-400 rounded-tl" />
                   <div className="absolute -top-0.5 -right-0.5 w-6 h-6 border-t-2 border-r-2 border-cyan-400 rounded-tr" />
                   <div className="absolute -bottom-0.5 -left-0.5 w-6 h-6 border-b-2 border-l-2 border-cyan-400 rounded-bl" />
@@ -364,20 +445,25 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
                 </div>
               </div>
 
-              <div className="absolute top-3 left-3 right-3 flex justify-between">
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/50 backdrop-blur-sm">
+              <div className="absolute top-3 left-3 right-3 flex justify-between items-center">
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm">
                   <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                   <span className="text-xs text-white font-medium">EN VIVO</span>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={switchCamera}
-                  className="p-2 rounded-full bg-black/50 backdrop-blur-sm text-white hover:bg-black/70 transition-colors"
-                  aria-label="Cambiar cámara"
-                >
-                  <RefreshIcon className="w-5 h-5" />
-                </button>
+                <div className="px-3 py-1.5 rounded-full bg-cyan-500/80 backdrop-blur-sm">
+                  <span className="text-xs text-white font-semibold">
+                    {captureStep === "front" ? "FRONTAL" : "REVERSO"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="absolute bottom-16 left-0 right-0 flex justify-center">
+                <div className="px-4 py-2 rounded-lg bg-black/60 backdrop-blur-sm">
+                  <p className="text-sm text-white text-center">
+                    {currentStepConfig?.instruction}
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -390,6 +476,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
                   shadow-lg shadow-black/50 transition-all duration-200
                   hover:scale-110 hover:bg-cyan-400
                   focus:outline-none focus:ring-4 focus:ring-cyan-500/50
+                  active:scale-95
                 "
                 aria-label="Capturar foto"
               >
@@ -413,9 +500,11 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
               </svg>
             </div>
             <div className="text-sm">
-              <p className="font-medium text-slate-300">Consejos para una buena captura</p>
+              <p className="font-medium text-slate-300">
+                {captureStep === "front" ? "Foto frontal" : "Foto del reverso"}
+              </p>
               <ul className="mt-1 text-slate-400 space-y-0.5">
-                <li>• Centra el documento dentro del marco</li>
+                <li>• Centra la cédula dentro del marco</li>
                 <li>• Evita sombras y reflejos</li>
                 <li>• Asegúrate de que el texto sea legible</li>
               </ul>
@@ -424,71 +513,75 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
         </div>
       )}
 
-      {cameraState === "captured" && capturedImage && (
+      {captureStep === "review" && frontImage && backImage && (
         <div className="space-y-4">
-          <div className="relative rounded-xl overflow-hidden border border-slate-600/50 bg-slate-800/30">
-            <div className="aspect-[4/3] relative">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={capturedImage}
-                alt="Foto capturada del documento"
-                className="w-full h-full object-contain bg-slate-900"
-              />
-
-              <div className="absolute top-3 right-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="relative rounded-xl overflow-hidden border border-slate-600/50 bg-slate-800/30">
+              <div className="aspect-[4/3] relative">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={frontImage}
+                  alt="Foto frontal de la cédula"
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute top-2 left-2 px-2 py-1 rounded bg-black/60 backdrop-blur-sm">
+                  <span className="text-xs text-white font-medium">Frontal</span>
+                </div>
                 <button
                   type="button"
-                  onClick={retakePhoto}
+                  onClick={retakeFront}
                   disabled={isLoading}
                   className="
-                    inline-flex items-center gap-2 px-3 py-2 rounded-lg
-                    bg-black/70 backdrop-blur-sm text-white text-sm font-medium
-                    transition-all duration-200 hover:bg-black/90
+                    absolute bottom-2 right-2 p-1.5 rounded-lg
+                    bg-black/60 backdrop-blur-sm text-white
+                    hover:bg-black/80 transition-colors
                     disabled:opacity-50 disabled:cursor-not-allowed
                   "
+                  aria-label="Retomar foto frontal"
                 >
                   <RefreshIcon className="w-4 h-4" />
-                  Volver a tomar
                 </button>
               </div>
+            </div>
 
-              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-green-500/20 border border-green-500/30">
-                    <CheckCircleIcon className="w-5 h-5 text-green-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-white">Foto capturada</p>
-                    <p className="text-xs text-slate-400">
-                      Verifica que el documento sea legible
-                    </p>
-                  </div>
+            <div className="relative rounded-xl overflow-hidden border border-slate-600/50 bg-slate-800/30">
+              <div className="aspect-[4/3] relative">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={backImage}
+                  alt="Foto del reverso de la cédula"
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute top-2 left-2 px-2 py-1 rounded bg-black/60 backdrop-blur-sm">
+                  <span className="text-xs text-white font-medium">Reverso</span>
                 </div>
+                <button
+                  type="button"
+                  onClick={retakeBack}
+                  disabled={isLoading}
+                  className="
+                    absolute bottom-2 right-2 p-1.5 rounded-lg
+                    bg-black/60 backdrop-blur-sm text-white
+                    hover:bg-black/80 transition-colors
+                    disabled:opacity-50 disabled:cursor-not-allowed
+                  "
+                  aria-label="Retomar foto del reverso"
+                >
+                  <RefreshIcon className="w-4 h-4" />
+                </button>
               </div>
             </div>
           </div>
 
-          <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
-            <div className="p-1.5 rounded-full bg-amber-500/20">
-              <svg
-                className="w-4 h-4 text-amber-400"
-                fill="currentColor"
-                viewBox="0 0 20 20"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z"
-                  clipRule="evenodd"
-                />
-              </svg>
+          <div className="flex items-center gap-3 p-3 rounded-lg bg-green-500/10 border border-green-500/20">
+            <div className="p-2 rounded-lg bg-green-500/20">
+              <CheckCircleIcon className="w-5 h-5 text-green-400" />
             </div>
-            <div className="text-sm">
-              <p className="font-medium text-slate-300">Revisa antes de continuar</p>
-              <ul className="mt-1 text-slate-400 space-y-0.5">
-                <li>• El documento debe estar completamente visible</li>
-                <li>• La información debe ser legible</li>
-                <li>• No debe haber brillos que oculten datos</li>
-              </ul>
+            <div>
+              <p className="text-sm font-medium text-white">Fotos capturadas correctamente</p>
+              <p className="text-xs text-slate-400">
+                Verifica que ambas fotos sean legibles antes de continuar
+              </p>
             </div>
           </div>
         </div>
@@ -517,7 +610,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
       <button
         type="button"
         onClick={handleSubmit}
-        disabled={isLoading || cameraState !== "captured"}
+        disabled={isLoading || captureStep !== "review"}
         className={`
           w-full rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 
           px-6 py-3.5 text-base font-semibold text-white
