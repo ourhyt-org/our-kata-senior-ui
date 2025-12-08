@@ -24,6 +24,8 @@ HTMLCanvasElement.prototype.getContext = jest.fn(() => ({
 
 HTMLCanvasElement.prototype.toDataURL = jest.fn(() => "data:image/jpeg;base64,mockImageData");
 
+HTMLVideoElement.prototype.play = jest.fn().mockResolvedValue(undefined);
+
 const clickActivarCamara = async (user: ReturnType<typeof userEvent.setup>) => {
   const buttons = screen.getAllByRole("button", { name: /activar cámara/i });
   const realButton = buttons.find((btn) => btn.tagName === "BUTTON");
@@ -45,19 +47,19 @@ describe("DocumentStepForm", () => {
   });
 
   describe("Renderizado inicial", () => {
-    it("debe renderizar el estado inicial con botón para activar cámara", () => {
+    it("debe renderizar el estado inicial para captura frontal", () => {
       render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
 
-      expect(screen.getByText(/activa la cámara para fotografiar tu documento/i)).toBeInTheDocument();
+      expect(screen.getByText(/foto frontal de la cédula/i)).toBeInTheDocument();
+      expect(screen.getByText(/captura la parte frontal/i)).toBeInTheDocument();
       expect(screen.getAllByRole("button", { name: /activar cámara/i }).length).toBeGreaterThan(0);
-      expect(screen.getByRole("button", { name: /continuar con verificación ocr/i })).toBeDisabled();
     });
 
-    it("debe mostrar instrucciones sobre iluminación y encuadre", () => {
+    it("debe mostrar los indicadores de paso (Frontal y Reverso)", () => {
       render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
 
-      expect(screen.getByText(/buena iluminación/i)).toBeInTheDocument();
-      expect(screen.getByText(/documento completo/i)).toBeInTheDocument();
+      expect(screen.getByText("Frontal")).toBeInTheDocument();
+      expect(screen.getByText("Reverso")).toBeInTheDocument();
     });
 
     it("debe tener el botón de continuar deshabilitado inicialmente", () => {
@@ -148,18 +150,26 @@ describe("DocumentStepForm", () => {
     });
   });
 
+  describe("Flujo de captura", () => {
+    it("debe requerir ambas fotos (frontal y reverso) para poder continuar", () => {
+      render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
+
+      expect(screen.getByRole("button", { name: /continuar con verificación ocr/i })).toBeDisabled();
+    });
+  });
+
   describe("Accesibilidad", () => {
     it("debe tener el contenedor inicial accesible con teclado", () => {
       render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
 
-      const container = screen.getByText(/activa la cámara/i).closest("div[role='button']");
+      const container = screen.getByText(/foto frontal/i).closest("div[role='button']");
       expect(container).toHaveAttribute("tabIndex", "0");
     });
 
     it("debe activar cámara con Enter desde el contenedor", async () => {
       render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
 
-      const container = screen.getByText(/activa la cámara/i).closest("div[role='button']");
+      const container = screen.getByText(/foto frontal/i).closest("div[role='button']");
       
       if (container) {
         fireEvent.keyDown(container, { key: "Enter" });
@@ -173,7 +183,7 @@ describe("DocumentStepForm", () => {
     it("debe activar cámara con Space desde el contenedor", async () => {
       render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
 
-      const container = screen.getByText(/activa la cámara/i).closest("div[role='button']");
+      const container = screen.getByText(/foto frontal/i).closest("div[role='button']");
       
       if (container) {
         fireEvent.keyDown(container, { key: " " });

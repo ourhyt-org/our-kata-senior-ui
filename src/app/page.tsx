@@ -12,6 +12,11 @@ interface IdentityData {
   phoneNumber: string;
 }
 
+interface DocumentImages {
+  front: string;
+  back: string;
+}
+
 function StepBadge({ currentStep, totalSteps }: { currentStep: number; totalSteps: number }) {
   return (
     <div className="inline-flex items-center gap-2 rounded-full bg-cyan-500/10 border border-cyan-500/20 px-3 py-1">
@@ -111,8 +116,8 @@ const STEP_CONFIG: Record<AuthStep, StepConfig> = {
     icon: <ShieldIcon />,
   },
   DOCUMENT: {
-    title: "Sube una foto de tu documento",
-    subtitle: "Asegúrate de que esté enfocado, sin brillos y completamente visible.",
+    title: "Captura de tu cédula",
+    subtitle: "Fotografía el frente y reverso de tu documento de identidad.",
     icon: <DocumentIcon />,
   },
   LIVENESS: {
@@ -125,15 +130,15 @@ const STEP_CONFIG: Record<AuthStep, StepConfig> = {
 export default function Home() {
   const [step, setStep] = useState<AuthStep>("IDENTITY");
   const [, setIdentityData] = useState<IdentityData | null>(null);
-  const [, setDocumentImage] = useState<string | null>(null);
+  const [, setDocumentImages] = useState<DocumentImages | null>(null);
 
   const handleIdentitySubmit = (data: IdentityData) => {
     setIdentityData(data);
     setStep("DOCUMENT");
   };
 
-  const handleDocumentSubmit = (imageData: string) => {
-    setDocumentImage(imageData);
+  const handleDocumentSubmit = (images: DocumentImages) => {
+    setDocumentImages(images);
     setStep("LIVENESS");
   };
 
