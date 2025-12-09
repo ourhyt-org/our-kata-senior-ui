@@ -62,10 +62,10 @@ describe("DocumentStepForm", () => {
       expect(screen.getByText("Reverso")).toBeInTheDocument();
     });
 
-    it("debe tener el botón de continuar deshabilitado inicialmente", () => {
+    it("no debe mostrar el botón de continuar en el estado inicial", () => {
       render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
 
-      expect(screen.getByRole("button", { name: /continuar con verificación ocr/i })).toBeDisabled();
+      expect(screen.queryByRole("button", { name: /continuar con verificación ocr/i })).not.toBeInTheDocument();
     });
   });
 
@@ -151,10 +151,11 @@ describe("DocumentStepForm", () => {
   });
 
   describe("Flujo de captura", () => {
-    it("debe requerir ambas fotos (frontal y reverso) para poder continuar", () => {
+    it("debe requerir validación de foto frontal antes de pasar al reverso", () => {
       render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
 
-      expect(screen.getByRole("button", { name: /continuar con verificación ocr/i })).toBeDisabled();
+      expect(screen.getByText(/foto frontal de la cédula/i)).toBeInTheDocument();
+      expect(screen.queryByText(/foto del reverso/i)).not.toBeInTheDocument();
     });
   });
 
