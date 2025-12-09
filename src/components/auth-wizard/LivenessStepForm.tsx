@@ -3,7 +3,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { 
   checkLiveness, 
-  captureBurstFrames, 
   AuthApiError, 
   LivenessResponse 
 } from "@/lib/api";
@@ -285,6 +284,7 @@ export function LivenessStepForm({
   const [capturedFrames, setCapturedFrames] = useState<Blob[]>([]);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
   const config = CHALLENGE_CONFIG[challengeType];
@@ -319,9 +319,9 @@ export function LivenessStepForm({
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = stream;
 
+      // Assign stream to video element
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
       }
 
       setState("ready");
@@ -351,6 +351,14 @@ export function LivenessStepForm({
     }
   }, [stopCamera]);
 
+  // Effect to handle video element when stream is available
+  useEffect(() => {
+    if (streamRef.current && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(console.error);
+    }
+  }, [state]);
+
   // -------------------------------------------------------------------------
   // Capture Flow
   // -------------------------------------------------------------------------
@@ -377,7 +385,11 @@ export function LivenessStepForm({
   }, [state, countdown]);
 
   const startBurstCapture = useCallback(async () => {
-    if (!videoRef.current) return;
+    if (!videoRef.current || !canvasRef.current) {
+      setFormErrors({ capture: "Error: no se pudo acceder a la cámara" });
+      setState("error");
+      return;
+    }
 
     setState("capturing");
     setCaptureProgress(0);
@@ -386,16 +398,16 @@ export function LivenessStepForm({
       const { framesCount, durationMs } = BURST_CONFIG;
       const intervalMs = durationMs / (framesCount - 1);
       
-      // Create canvas for frame capture
-      const canvas = document.createElement("canvas");
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
       const context = canvas.getContext("2d");
       
-      if (!context || !videoRef.current) {
-        throw new Error("No se pudo inicializar la captura");
+      if (!context) {
+        throw new Error("No se pudo inicializar el canvas");
       }
 
-      canvas.width = videoRef.current.videoWidth;
-      canvas.height = videoRef.current.videoHeight;
+      canvas.width = video.videoWidth || 1280;
+      canvas.height = video.videoHeight || 720;
 
       const frames: Blob[] = [];
 
@@ -404,7 +416,7 @@ export function LivenessStepForm({
         context.save();
         context.translate(canvas.width, 0);
         context.scale(-1, 1);
-        context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
         context.restore();
 
         // Convert canvas to Blob
@@ -504,6 +516,18 @@ export function LivenessStepForm({
 
   return (
     <div className="space-y-6">
+      {/* Hidden canvas for frame capture */}
+      <canvas ref={canvasRef} className="hidden" />
+      
+      {/* Video element - always in DOM but hidden when not needed */}
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        className="hidden"
+      />
+
       {/* API Error Banner */}
       {formErrors.api && (
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4">
@@ -668,11 +692,16 @@ export function LivenessStepForm({
         <div className="space-y-4">
           <div className="relative rounded-xl overflow-hidden border border-slate-600/50 bg-black">
             <div className="aspect-square sm:aspect-[4/3] relative">
+              {/* Visible video feed */}
               <video
-                ref={videoRef}
                 autoPlay
                 playsInline
                 muted
+                ref={(el) => {
+                  if (el && streamRef.current) {
+                    el.srcObject = streamRef.current;
+                  }
+                }}
                 className="w-full h-full object-cover"
                 style={{ transform: "scaleX(-1)" }}
               />
@@ -726,11 +755,16 @@ export function LivenessStepForm({
         <div className="space-y-4">
           <div className="relative rounded-xl overflow-hidden border border-slate-600/50 bg-black">
             <div className="aspect-square sm:aspect-[4/3] relative">
+              {/* Visible video feed */}
               <video
-                ref={videoRef}
                 autoPlay
                 playsInline
                 muted
+                ref={(el) => {
+                  if (el && streamRef.current) {
+                    el.srcObject = streamRef.current;
+                  }
+                }}
                 className="w-full h-full object-cover"
                 style={{ transform: "scaleX(-1)" }}
               />
@@ -754,11 +788,16 @@ export function LivenessStepForm({
         <div className="space-y-4">
           <div className="relative rounded-xl overflow-hidden border border-cyan-500/50 bg-black">
             <div className="aspect-square sm:aspect-[4/3] relative">
+              {/* Visible video feed */}
               <video
-                ref={videoRef}
                 autoPlay
                 playsInline
                 muted
+                ref={(el) => {
+                  if (el && streamRef.current) {
+                    el.srcObject = streamRef.current;
+                  }
+                }}
                 className="w-full h-full object-cover"
                 style={{ transform: "scaleX(-1)" }}
               />
