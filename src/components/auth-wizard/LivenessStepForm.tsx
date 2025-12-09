@@ -47,7 +47,7 @@ type LivenessState =
 const MAX_ATTEMPTS = 3;
 
 const BURST_CONFIG = {
-  framesCount: 5,
+  framesCount: 8,
   durationMs: 2000,
 } as const;
 
@@ -290,6 +290,9 @@ export function LivenessStepForm({
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [capturedFrames, setCapturedFrames] = useState<Blob[]>([]);
   const [attempts, setAttempts] = useState<number>(0);
+  
+  // useRef to track attempts synchronously (useState is async and causes stale closure issues)
+  const attemptsRef = useRef<number>(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -493,8 +496,10 @@ export function LivenessStepForm({
         }
         
         // Soft failure - check if we have remaining attempts
-        const newAttempts = attempts + 1;
-        setAttempts(newAttempts);
+        // Use ref for synchronous access (useState is async and causes stale closure)
+        attemptsRef.current += 1;
+        const newAttempts = attemptsRef.current;
+        setAttempts(newAttempts); // Also update state for UI
         
         if (newAttempts >= MAX_ATTEMPTS) {
           // Max attempts reached - must restart from step 1
@@ -514,8 +519,9 @@ export function LivenessStepForm({
       }
     } catch (error) {
       // Network/API error - also counts as an attempt
-      const newAttempts = attempts + 1;
-      setAttempts(newAttempts);
+      attemptsRef.current += 1;
+      const newAttempts = attemptsRef.current;
+      setAttempts(newAttempts); // Also update state for UI
       
       let errorMessage = "Error inesperado. Por favor, intenta nuevamente.";
       if (error instanceof AuthApiError) {
@@ -535,7 +541,7 @@ export function LivenessStepForm({
       });
       setState("error");
     }
-  }, [token, onSubmitSuccess, onRetry, onRejected, attempts, resetCapture]);
+  }, [token, onSubmitSuccess, onRetry, onRejected, resetCapture]);
 
   const retryCapture = useCallback(() => {
     resetCapture();
