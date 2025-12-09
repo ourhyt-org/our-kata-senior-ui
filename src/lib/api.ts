@@ -51,9 +51,13 @@ export interface DocumentResponse {
 /**
  * Response from POST /kata/auth/liveness
  * Returns liveness verification results
+ * 
+ * Note: challengeType is extracted from the JWT token by the backend,
+ * NOT sent in the request body.
  */
 export interface LivenessResponse {
   authId: string;
+  /** Challenge type used for verification (from JWT claim) */
   challengeType: "BLINK" | "APPROACH";
   /** Liveness confidence score from 0.0 to 1.0 */
   livenessScore: number;
@@ -180,30 +184,46 @@ export async function uploadDocument(
 /**
  * POST /kata/auth/liveness
  * 
- * Submits two face frames for liveness verification.
- * The backend determines the challenge type from the JWT token claim `challenge_type`,
- * so we don't need to send it in the request body.
+ * Submits multiple face frames for liveness verification.
  * 
- * Frontend uses challengeType only to show appropriate instructions:
+ * IMPORTANT:
+ * - The backend expects the field name "frames" repeated for each image
+ * - challengeType is NOT sent in the form - it's extracted from the JWT token claim
+ * - Minimum 2 frames required, ideally 5 frames for better accuracy
+ * - Frames should capture the user performing the requested movement (BLINK or APPROACH)
+ * 
+ * Frontend uses challengeType (from /start response) only to show appropriate instructions:
  * - BLINK: "Parpadea dos veces mientras miras a la cámara"
  * - APPROACH: "Acércate lentamente a la cámara"
  * 
  * @param token - JWT token from /start response
- * @param frame1 - First captured face image
- * @param frame2 - Second captured face image (after user performs the action)
+ * @param frames - Array of captured face images (minimum 2, ideally 5)
  */
 export async function checkLiveness(
   token: string,
-  frame1: File | Blob,
-  frame2: File | Blob
+  frames: Array<File | Blob>
 ): Promise<LivenessResponse> {
+  if (frames.length < 2) {
+    throw new AuthApiError(
+      "Se requieren al menos 2 frames",
+      400,
+      "Mínimo 2 frames requeridos para la verificación de vida"
+    );
+  }
+
   const formData = new FormData();
-  formData.append("frame1", frame1, "frame1.jpg");
-  formData.append("frame2", frame2, "frame2.jpg");
+  
+  // Append each frame with the same field name "frames"
+  // Backend expects: frames: List[UploadFile]
+  frames.forEach((frame, index) => {
+    formData.append("frames", frame, `frame_${index + 1}.jpg`);
+  });
 
   const response = await fetch(`${API_BASE_URL}/kata/auth/liveness`, {
     method: "POST",
     headers: {
+      // JWT token contains the challenge_type claim
+      // Backend reads challengeType from the token, not from the form
       Authorization: `Bearer ${token}`,
     },
     body: formData,
@@ -249,3 +269,73 @@ export function dataURLtoFile(dataURL: string, filename: string): File {
   return new File([blob], filename, { type: blob.type });
 }
 
+// ============================================================================
+// Frame Burst Capture Helper
+// ============================================================================
+
+export interface BurstCaptureOptions {
+  /** Number of frames to capture (default: 5) */
+  framesCount?: number;
+  /** Total duration in milliseconds (default: 2000) */
+  durationMs?: number;
+}
+
+/**
+ * Captures a burst of frames from a video element
+ * 
+ * @param videoElement - HTMLVideoElement with active stream
+ * @param options - Capture configuration
+ * @returns Array of Blob images
+ */
+export async function captureBurstFrames(
+  videoElement: HTMLVideoElement,
+  options: BurstCaptureOptions = {}
+): Promise<Blob[]> {
+  const { framesCount = 5, durationMs = 2000 } = options;
+  const intervalMs = durationMs / (framesCount - 1);
+  
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  
+  if (!context) {
+    throw new Error("No se pudo crear el contexto del canvas");
+  }
+
+  canvas.width = videoElement.videoWidth;
+  canvas.height = videoElement.videoHeight;
+
+  const frames: Blob[] = [];
+
+  for (let i = 0; i < framesCount; i++) {
+    // Mirror the image for selfie experience
+    context.save();
+    context.translate(canvas.width, 0);
+    context.scale(-1, 1);
+    context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+    context.restore();
+
+    // Convert canvas to Blob
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => {
+          if (blob) {
+            resolve(blob);
+          } else {
+            reject(new Error(`Error al capturar frame ${i + 1}`));
+          }
+        },
+        "image/jpeg",
+        0.85
+      );
+    });
+
+    frames.push(blob);
+
+    // Wait before next capture (except for the last frame)
+    if (i < framesCount - 1) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+
+  return frames;
+}

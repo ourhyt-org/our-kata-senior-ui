@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { checkLiveness, dataURLtoFile, AuthApiError, LivenessResponse } from "@/lib/api";
+import { 
+  checkLiveness, 
+  captureBurstFrames, 
+  AuthApiError, 
+  LivenessResponse 
+} from "@/lib/api";
 
 // ============================================================================
 // Type Definitions
@@ -23,32 +28,43 @@ interface FormErrors {
   api?: string;
 }
 
-type CameraState = "idle" | "requesting" | "active" | "error";
-type CaptureStep = "instructions" | "frame1" | "frame2_countdown" | "frame2" | "review";
+type LivenessState = 
+  | "idle"           // Initial state - show instructions
+  | "requesting"     // Requesting camera permission
+  | "ready"          // Camera active, waiting for user to start
+  | "countdown"      // 3..2..1 countdown before capture
+  | "capturing"      // Capturing burst of frames
+  | "submitting"     // Sending frames to API
+  | "error";         // Error state
 
 // ============================================================================
 // Constants
 // ============================================================================
 
+const BURST_CONFIG = {
+  framesCount: 5,
+  durationMs: 2000,
+} as const;
+
 /**
  * Challenge instructions based on the type from the JWT
- * - BLINK: User must blink twice while looking at the camera
+ * - BLINK: User must blink while looking at the camera
  * - APPROACH: User must slowly approach the camera
  */
 const CHALLENGE_CONFIG = {
   BLINK: {
     title: "Prueba de parpadeo",
-    instruction: "Parpadea dos veces mientras miras a la cámara",
-    frame1Hint: "Mira a la cámara con los ojos abiertos",
-    frame2Hint: "Ahora parpadea naturalmente",
+    instruction: "Parpadea naturalmente mientras miras a la cámara",
+    duringCapture: "Parpadea ahora...",
     icon: "👁️",
+    tip: "Mantén la mirada al centro y parpadea de forma natural durante la captura.",
   },
   APPROACH: {
     title: "Prueba de acercamiento",
-    instruction: "Acércate lentamente a la cámara",
-    frame1Hint: "Mantén tu rostro alejado de la cámara",
-    frame2Hint: "Ahora acércate hasta que tu rostro llene el marco",
+    instruction: "Acércate lentamente hacia la cámara",
+    duringCapture: "Acércate lentamente...",
     icon: "📷",
+    tip: "Empieza con el rostro alejado y ve acercándote gradualmente durante la captura.",
   },
 };
 
@@ -138,7 +154,7 @@ function FaceIcon({ className }: { className?: string }) {
   );
 }
 
-function CaptureIcon({ className }: { className?: string }) {
+function PlayIcon({ className }: { className?: string }) {
   return (
     <svg
       className={className}
@@ -146,7 +162,11 @@ function CaptureIcon({ className }: { className?: string }) {
       viewBox="0 0 24 24"
       aria-hidden="true"
     >
-      <circle cx="12" cy="12" r="10" />
+      <path
+        fillRule="evenodd"
+        d="M4.5 5.653c0-1.426 1.529-2.33 2.779-1.643l11.54 6.348c1.295.712 1.295 2.573 0 3.285L7.28 19.991c-1.25.687-2.779-.217-2.779-1.643V5.653z"
+        clipRule="evenodd"
+      />
     </svg>
   );
 }
@@ -168,10 +188,10 @@ function ErrorIcon() {
   );
 }
 
-function SpinnerIcon() {
+function SpinnerIcon({ className }: { className?: string }) {
   return (
     <svg
-      className="animate-spin h-5 w-5"
+      className={`animate-spin ${className || "h-5 w-5"}`}
       xmlns="http://www.w3.org/2000/svg"
       fill="none"
       viewBox="0 0 24 24"
@@ -195,6 +215,59 @@ function SpinnerIcon() {
 }
 
 // ============================================================================
+// Progress Ring Component
+// ============================================================================
+
+function CaptureProgressRing({ 
+  progress, 
+  framesCount 
+}: { 
+  progress: number; 
+  framesCount: number;
+}) {
+  const radius = 45;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference - (progress / 100) * circumference;
+
+  return (
+    <div className="relative w-28 h-28">
+      <svg className="w-28 h-28 transform -rotate-90">
+        {/* Background circle */}
+        <circle
+          cx="56"
+          cy="56"
+          r={radius}
+          stroke="currentColor"
+          strokeWidth="6"
+          fill="none"
+          className="text-slate-700"
+        />
+        {/* Progress circle */}
+        <circle
+          cx="56"
+          cy="56"
+          r={radius}
+          stroke="currentColor"
+          strokeWidth="6"
+          fill="none"
+          strokeLinecap="round"
+          className="text-cyan-400 transition-all duration-300"
+          style={{
+            strokeDasharray: circumference,
+            strokeDashoffset,
+          }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="text-2xl font-bold text-white">
+          {Math.round((progress / 100) * framesCount)}/{framesCount}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
 // Component
 // ============================================================================
 
@@ -205,40 +278,35 @@ export function LivenessStepForm({
   onRetry,
   onRejected,
 }: LivenessStepFormProps) {
-  const [cameraState, setCameraState] = useState<CameraState>("idle");
-  const [captureStep, setCaptureStep] = useState<CaptureStep>("instructions");
-  const [frame1, setFrame1] = useState<string | null>(null);
-  const [frame2, setFrame2] = useState<string | null>(null);
+  const [state, setState] = useState<LivenessState>("idle");
   const [countdown, setCountdown] = useState<number>(0);
+  const [captureProgress, setCaptureProgress] = useState<number>(0);
   const [formErrors, setFormErrors] = useState<FormErrors>({});
-  const [isLoading, setIsLoading] = useState(false);
+  const [capturedFrames, setCapturedFrames] = useState<Blob[]>([]);
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const config = CHALLENGE_CONFIG[challengeType];
+
+  // -------------------------------------------------------------------------
+  // Camera Control
+  // -------------------------------------------------------------------------
 
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
-    if (countdownIntervalRef.current) {
-      clearInterval(countdownIntervalRef.current);
-      countdownIntervalRef.current = null;
-    }
   }, []);
 
   const startCamera = useCallback(async () => {
-    setCameraState("requesting");
+    setState("requesting");
     setFormErrors({});
 
     try {
       stopCamera();
 
-      // Use front-facing camera for selfie/liveness
       const constraints: MediaStreamConstraints = {
         video: {
           facingMode: "user",
@@ -253,13 +321,13 @@ export function LivenessStepForm({
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        await videoRef.current.play();
       }
 
-      setCameraState("active");
-      setCaptureStep("frame1");
+      setState("ready");
     } catch (error) {
       console.error("Error accessing camera:", error);
-      setCameraState("error");
+      setState("error");
 
       if (error instanceof DOMException) {
         if (error.name === "NotAllowedError") {
@@ -283,102 +351,106 @@ export function LivenessStepForm({
     }
   }, [stopCamera]);
 
-  const captureFrame = useCallback((): string | null => {
-    if (!videoRef.current || !canvasRef.current) return null;
+  // -------------------------------------------------------------------------
+  // Capture Flow
+  // -------------------------------------------------------------------------
 
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const context = canvas.getContext("2d");
-
-    if (!context) return null;
-
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-
-    // Mirror the image for a more natural selfie experience
-    context.translate(canvas.width, 0);
-    context.scale(-1, 1);
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    context.setTransform(1, 0, 0, 1, 0, 0);
-
-    return canvas.toDataURL("image/jpeg", 0.9);
+  const startCountdown = useCallback(() => {
+    setCountdown(3);
+    setState("countdown");
   }, []);
 
-  const captureFrame1 = useCallback(() => {
-    const imageData = captureFrame();
-    if (imageData) {
-      setFrame1(imageData);
-      setCaptureStep("frame2_countdown");
-      // Start countdown for frame 2
-      setCountdown(3);
-    }
-  }, [captureFrame]);
-
+  // Countdown effect
   useEffect(() => {
-    if (captureStep === "frame2_countdown" && countdown > 0) {
-      countdownIntervalRef.current = setTimeout(() => {
+    if (state !== "countdown") return;
+
+    if (countdown > 0) {
+      const timer = setTimeout(() => {
         setCountdown((prev) => prev - 1);
       }, 1000);
-    } else if (captureStep === "frame2_countdown" && countdown === 0) {
-      setCaptureStep("frame2");
+      return () => clearTimeout(timer);
+    } else {
+      // Countdown finished, start capturing
+      startBurstCapture();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, countdown]);
 
-    return () => {
-      if (countdownIntervalRef.current) {
-        clearTimeout(countdownIntervalRef.current);
+  const startBurstCapture = useCallback(async () => {
+    if (!videoRef.current) return;
+
+    setState("capturing");
+    setCaptureProgress(0);
+
+    try {
+      const { framesCount, durationMs } = BURST_CONFIG;
+      const intervalMs = durationMs / (framesCount - 1);
+      
+      // Create canvas for frame capture
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+      
+      if (!context || !videoRef.current) {
+        throw new Error("No se pudo inicializar la captura");
       }
-    };
-  }, [captureStep, countdown]);
 
-  const captureFrame2 = useCallback(() => {
-    const imageData = captureFrame();
-    if (imageData) {
-      setFrame2(imageData);
+      canvas.width = videoRef.current.videoWidth;
+      canvas.height = videoRef.current.videoHeight;
+
+      const frames: Blob[] = [];
+
+      for (let i = 0; i < framesCount; i++) {
+        // Mirror the image for selfie experience
+        context.save();
+        context.translate(canvas.width, 0);
+        context.scale(-1, 1);
+        context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+        context.restore();
+
+        // Convert canvas to Blob
+        const blob = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob(
+            (blob) => {
+              if (blob) {
+                resolve(blob);
+              } else {
+                reject(new Error(`Error al capturar frame ${i + 1}`));
+              }
+            },
+            "image/jpeg",
+            0.85
+          );
+        });
+
+        frames.push(blob);
+        setCaptureProgress(((i + 1) / framesCount) * 100);
+
+        // Wait before next capture (except for the last frame)
+        if (i < framesCount - 1) {
+          await new Promise((resolve) => setTimeout(resolve, intervalMs));
+        }
+      }
+
+      setCapturedFrames(frames);
       stopCamera();
-      setCaptureStep("review");
+      
+      // Auto-submit after capture
+      await submitFrames(frames);
+    } catch (error) {
+      console.error("Error during burst capture:", error);
+      setFormErrors({
+        capture: "Error durante la captura. Por favor, intenta nuevamente.",
+      });
+      setState("error");
     }
-  }, [captureFrame, stopCamera]);
-
-  const retakeFrames = useCallback(() => {
-    setFrame1(null);
-    setFrame2(null);
-    setCountdown(0);
-    setCaptureStep("instructions");
-    setCameraState("idle");
-    setFormErrors({});
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      stopCamera();
-    };
   }, [stopCamera]);
 
-  useEffect(() => {
-    if (cameraState === "active" && videoRef.current && streamRef.current) {
-      videoRef.current.srcObject = streamRef.current;
-      videoRef.current.play()?.catch(console.error);
-    }
-  }, [cameraState]);
-
-  /**
-   * Submit both frames for liveness verification
-   * The backend determines the challenge type from the JWT token
-   */
-  const handleSubmit = async () => {
-    if (!frame1 || !frame2) {
-      setFormErrors({ capture: "Debes capturar ambos frames para la verificación" });
-      return;
-    }
-
-    setIsLoading(true);
+  const submitFrames = useCallback(async (frames: Blob[]) => {
+    setState("submitting");
     setFormErrors({});
 
     try {
-      const frame1File = dataURLtoFile(frame1, "frame1.jpg");
-      const frame2File = dataURLtoFile(frame2, "frame2.jpg");
-
-      const response = await checkLiveness(token, frame1File, frame2File);
+      const response = await checkLiveness(token, frames);
 
       if (response.passed && response.nextStep === "COMPLETED") {
         onSubmitSuccess(response);
@@ -389,8 +461,7 @@ export function LivenessStepForm({
         } else {
           setFormErrors({ api: reason });
           onRetry(reason);
-          // Allow retry
-          retakeFrames();
+          resetCapture();
         }
       }
     } catch (error) {
@@ -403,19 +474,36 @@ export function LivenessStepForm({
           api: "Error inesperado. Por favor, intenta nuevamente.",
         });
       }
-    } finally {
-      setIsLoading(false);
+      setState("error");
     }
-  };
+  }, [token, onSubmitSuccess, onRetry, onRejected]);
 
-  const currentHint = captureStep === "frame1" || captureStep === "frame2_countdown" 
-    ? config.frame1Hint 
-    : config.frame2Hint;
+  const resetCapture = useCallback(() => {
+    setCapturedFrames([]);
+    setCaptureProgress(0);
+    setCountdown(0);
+    setFormErrors({});
+    setState("idle");
+  }, []);
+
+  const retryCapture = useCallback(() => {
+    resetCapture();
+    startCamera();
+  }, [resetCapture, startCamera]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, [stopCamera]);
+
+  // -------------------------------------------------------------------------
+  // Render
+  // -------------------------------------------------------------------------
 
   return (
     <div className="space-y-6">
-      <canvas ref={canvasRef} className="hidden" />
-
       {/* API Error Banner */}
       {formErrors.api && (
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4">
@@ -433,8 +521,8 @@ export function LivenessStepForm({
         </div>
       )}
 
-      {/* Instructions screen */}
-      {captureStep === "instructions" && cameraState === "idle" && (
+      {/* Instructions Screen */}
+      {state === "idle" && (
         <div className="space-y-6">
           <div className="text-center p-6 rounded-xl border border-slate-600/50 bg-slate-800/30">
             <div className="text-5xl mb-4">{config.icon}</div>
@@ -447,23 +535,18 @@ export function LivenessStepForm({
           </div>
 
           <div className="space-y-3">
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-slate-800/50 border border-slate-700/50">
-              <div className="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center text-cyan-400 font-semibold text-sm">
-                1
+            <div className="flex items-start gap-3 p-4 rounded-lg bg-cyan-500/10 border border-cyan-500/20">
+              <div className="p-1.5 rounded-full bg-cyan-500/20">
+                <svg className="w-4 h-4 text-cyan-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z" clipRule="evenodd" />
+                </svg>
               </div>
-              <div className="flex-1">
-                <p className="text-sm text-white font-medium">Primera captura</p>
-                <p className="text-xs text-slate-400">{config.frame1Hint}</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-slate-800/50 border border-slate-700/50">
-              <div className="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center text-cyan-400 font-semibold text-sm">
-                2
-              </div>
-              <div className="flex-1">
-                <p className="text-sm text-white font-medium">Segunda captura</p>
-                <p className="text-xs text-slate-400">{config.frame2Hint}</p>
+              <div>
+                <p className="text-sm font-medium text-white">Cómo funciona</p>
+                <p className="text-xs text-slate-400 mt-1">
+                  Capturaremos automáticamente {BURST_CONFIG.framesCount} fotos en {BURST_CONFIG.durationMs / 1000} segundos. 
+                  {config.tip}
+                </p>
               </div>
             </div>
           </div>
@@ -472,7 +555,7 @@ export function LivenessStepForm({
             type="button"
             onClick={startCamera}
             className="
-              w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-lg
+              w-full inline-flex items-center justify-center gap-2 px-4 py-3.5 rounded-lg
               bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-semibold
               shadow-lg shadow-cyan-500/25
               transition-all duration-200
@@ -480,13 +563,13 @@ export function LivenessStepForm({
             "
           >
             <FaceIcon className="w-5 h-5" />
-            Iniciar verificación biométrica
+            Iniciar prueba de vida
           </button>
         </div>
       )}
 
-      {/* Camera requesting permission */}
-      {cameraState === "requesting" && (
+      {/* Requesting Permission */}
+      {state === "requesting" && (
         <div className="rounded-xl border border-slate-600/50 bg-slate-800/30 p-8">
           <div className="flex flex-col items-center text-center space-y-4">
             <div className="p-4 rounded-full bg-cyan-500/20 animate-pulse">
@@ -502,8 +585,8 @@ export function LivenessStepForm({
         </div>
       )}
 
-      {/* Camera error */}
-      {cameraState === "error" && (
+      {/* Camera Error */}
+      {state === "error" && formErrors.camera && (
         <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-6">
           <div className="flex flex-col items-center text-center space-y-4">
             <div className="p-3 rounded-full bg-red-500/20">
@@ -521,9 +604,7 @@ export function LivenessStepForm({
                 />
               </svg>
             </div>
-            {formErrors.camera && (
-              <p className="text-sm text-red-400">{formErrors.camera}</p>
-            )}
+            <p className="text-sm text-red-400">{formErrors.camera}</p>
             <button
               type="button"
               onClick={startCamera}
@@ -540,8 +621,50 @@ export function LivenessStepForm({
         </div>
       )}
 
-      {/* Camera active - live viewfinder */}
-      {cameraState === "active" && (captureStep === "frame1" || captureStep === "frame2_countdown" || captureStep === "frame2") && (
+      {/* Capture Error - Allow Retry */}
+      {state === "error" && (formErrors.capture || formErrors.api) && !formErrors.camera && (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-6">
+            <div className="flex flex-col items-center text-center space-y-4">
+              <div className="p-3 rounded-full bg-red-500/20">
+                <svg
+                  className="w-8 h-8 text-red-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
+                  />
+                </svg>
+              </div>
+              <p className="text-sm text-red-400">
+                {formErrors.capture || formErrors.api}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={retryCapture}
+            className="
+              w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-lg
+              bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-semibold
+              shadow-lg shadow-cyan-500/25
+              transition-all duration-200
+              hover:from-cyan-500 hover:to-blue-500 hover:shadow-cyan-500/40
+            "
+          >
+            <RefreshIcon className="w-4 h-4" />
+            Intentar nuevamente
+          </button>
+        </div>
+      )}
+
+      {/* Camera Ready - Waiting to Start */}
+      {state === "ready" && (
         <div className="space-y-4">
           <div className="relative rounded-xl overflow-hidden border border-slate-600/50 bg-black">
             <div className="aspect-square sm:aspect-[4/3] relative">
@@ -551,200 +674,163 @@ export function LivenessStepForm({
                 playsInline
                 muted
                 className="w-full h-full object-cover"
-                style={{ transform: "scaleX(-1)" }} // Mirror for selfie
+                style={{ transform: "scaleX(-1)" }}
               />
 
               {/* Face oval overlay */}
               <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
                 <div className="w-48 h-64 sm:w-56 sm:h-72 border-2 border-white/40 rounded-[50%]">
-                  <div className="absolute inset-0 border-4 border-cyan-400/50 rounded-[50%] animate-pulse" />
+                  <div className="absolute inset-0 border-4 border-cyan-400/50 rounded-[50%]" />
                 </div>
               </div>
 
               {/* Top bar */}
               <div className="absolute top-3 left-3 right-3 flex justify-between items-center">
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm">
-                  <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                  <span className="text-xs text-white font-medium">EN VIVO</span>
-                </div>
-
-                <div className="px-3 py-1.5 rounded-full bg-cyan-500/80 backdrop-blur-sm">
-                  <span className="text-xs text-white font-semibold">
-                    {captureStep === "frame1" ? "FRAME 1" : captureStep === "frame2_countdown" ? `${countdown}...` : "FRAME 2"}
-                  </span>
+                  <div className="w-2 h-2 rounded-full bg-green-500" />
+                  <span className="text-xs text-white font-medium">CÁMARA LISTA</span>
                 </div>
               </div>
 
-              {/* Countdown overlay */}
-              {captureStep === "frame2_countdown" && countdown > 0 && (
-                <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-                  <div className="text-8xl font-bold text-cyan-400 animate-pulse">
-                    {countdown}
-                  </div>
-                </div>
-              )}
-
               {/* Instruction overlay */}
-              <div className="absolute bottom-16 left-0 right-0 flex justify-center">
-                <div className="px-4 py-2 rounded-lg bg-black/60 backdrop-blur-sm max-w-xs">
+              <div className="absolute bottom-4 left-4 right-4">
+                <div className="px-4 py-3 rounded-lg bg-black/70 backdrop-blur-sm">
                   <p className="text-sm text-white text-center">
-                    {currentHint}
+                    Centra tu rostro en el óvalo y presiona el botón cuando estés listo
                   </p>
                 </div>
               </div>
             </div>
-
-            {/* Capture button */}
-            {(captureStep === "frame1" || captureStep === "frame2") && (
-              <div className="absolute bottom-4 left-0 right-0 flex justify-center">
-                <button
-                  type="button"
-                  onClick={captureStep === "frame1" ? captureFrame1 : captureFrame2}
-                  className="
-                    p-2 rounded-full bg-white text-slate-900
-                    shadow-lg shadow-black/50 transition-all duration-200
-                    hover:scale-110 hover:bg-cyan-400
-                    focus:outline-none focus:ring-4 focus:ring-cyan-500/50
-                    active:scale-95
-                  "
-                  aria-label={`Capturar frame ${captureStep === "frame1" ? "1" : "2"}`}
-                >
-                  <CaptureIcon className="w-12 h-12" />
-                </button>
-              </div>
-            )}
           </div>
 
-          {/* Progress indicators */}
-          <div className="flex justify-center gap-3">
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-              frame1
-                ? "bg-green-500/20 text-green-400 border border-green-500/30"
-                : captureStep === "frame1"
-                  ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30"
-                  : "bg-slate-700/50 text-slate-400 border border-slate-600/30"
-            }`}>
-              {frame1 ? <CheckCircleIcon className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5 flex items-center justify-center">1</span>}
-              Frame 1
-            </div>
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-              frame2
-                ? "bg-green-500/20 text-green-400 border border-green-500/30"
-                : captureStep === "frame2" || captureStep === "frame2_countdown"
-                  ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30"
-                  : "bg-slate-700/50 text-slate-400 border border-slate-600/30"
-            }`}>
-              {frame2 ? <CheckCircleIcon className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5 flex items-center justify-center">2</span>}
-              Frame 2
+          <button
+            type="button"
+            onClick={startCountdown}
+            className="
+              w-full inline-flex items-center justify-center gap-2 px-4 py-3.5 rounded-lg
+              bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-semibold text-lg
+              shadow-lg shadow-cyan-500/25
+              transition-all duration-200
+              hover:from-cyan-500 hover:to-blue-500 hover:shadow-cyan-500/40
+              active:scale-[0.98]
+            "
+          >
+            <PlayIcon className="w-6 h-6" />
+            ¡Iniciar captura!
+          </button>
+        </div>
+      )}
+
+      {/* Countdown */}
+      {state === "countdown" && (
+        <div className="space-y-4">
+          <div className="relative rounded-xl overflow-hidden border border-slate-600/50 bg-black">
+            <div className="aspect-square sm:aspect-[4/3] relative">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+                style={{ transform: "scaleX(-1)" }}
+              />
+
+              {/* Countdown overlay */}
+              <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                <div className="text-center">
+                  <div className="text-9xl font-bold text-cyan-400 animate-pulse">
+                    {countdown}
+                  </div>
+                  <p className="text-xl text-white mt-4">Prepárate...</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Review state - both frames captured */}
-      {captureStep === "review" && frame1 && frame2 && (
+      {/* Capturing Burst */}
+      {state === "capturing" && (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="relative rounded-xl overflow-hidden border border-green-500/30 bg-slate-800/30">
-              <div className="aspect-[3/4] relative">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={frame1}
-                  alt="Frame 1 - rostro capturado"
-                  className="w-full h-full object-cover"
-                />
-                <div className="absolute top-2 left-2 px-2 py-1 rounded bg-green-500/80 backdrop-blur-sm">
-                  <span className="text-xs text-white font-medium">✓ Frame 1</span>
+          <div className="relative rounded-xl overflow-hidden border border-cyan-500/50 bg-black">
+            <div className="aspect-square sm:aspect-[4/3] relative">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+                style={{ transform: "scaleX(-1)" }}
+              />
+
+              {/* Face oval overlay with pulsing effect */}
+              <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                <div className="w-48 h-64 sm:w-56 sm:h-72 border-4 border-cyan-400 rounded-[50%] animate-pulse" />
+              </div>
+
+              {/* Recording indicator */}
+              <div className="absolute top-3 left-3 right-3 flex justify-between items-center">
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-500/80 backdrop-blur-sm animate-pulse">
+                  <div className="w-2 h-2 rounded-full bg-white" />
+                  <span className="text-xs text-white font-medium">CAPTURANDO</span>
+                </div>
+                <div className="px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm">
+                  <span className="text-xs text-white font-semibold">
+                    {Math.round(captureProgress)}%
+                  </span>
                 </div>
               </div>
-            </div>
 
-            <div className="relative rounded-xl overflow-hidden border border-green-500/30 bg-slate-800/30">
-              <div className="aspect-[3/4] relative">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={frame2}
-                  alt="Frame 2 - rostro capturado"
-                  className="w-full h-full object-cover"
+              {/* Progress ring overlay */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="absolute inset-0 bg-black/30" />
+                <CaptureProgressRing 
+                  progress={captureProgress} 
+                  framesCount={BURST_CONFIG.framesCount} 
                 />
-                <div className="absolute top-2 left-2 px-2 py-1 rounded bg-green-500/80 backdrop-blur-sm">
-                  <span className="text-xs text-white font-medium">✓ Frame 2</span>
+              </div>
+
+              {/* Instruction */}
+              <div className="absolute bottom-4 left-4 right-4">
+                <div className="px-4 py-3 rounded-lg bg-cyan-500/80 backdrop-blur-sm">
+                  <p className="text-sm text-white text-center font-medium">
+                    {config.duringCapture}
+                  </p>
                 </div>
               </div>
             </div>
           </div>
+        </div>
+      )}
 
-          <div className="flex items-center gap-3 p-3 rounded-lg bg-green-500/10 border border-green-500/20">
-            <div className="p-2 rounded-lg bg-green-500/20">
-              <CheckCircleIcon className="w-5 h-5 text-green-400" />
+      {/* Submitting */}
+      {state === "submitting" && (
+        <div className="rounded-xl border border-slate-600/50 bg-slate-800/30 p-8">
+          <div className="flex flex-col items-center text-center space-y-4">
+            <div className="p-4 rounded-full bg-cyan-500/20">
+              <SpinnerIcon className="w-10 h-10 text-cyan-400" />
             </div>
-            <div>
-              <p className="text-sm font-medium text-white">¡Capturas completadas!</p>
-              <p className="text-xs text-slate-400">
-                Listo para verificar tu identidad
+            <div className="space-y-2">
+              <p className="text-base font-medium text-white">Verificando prueba de vida...</p>
+              <p className="text-sm text-slate-400">
+                Analizando {capturedFrames.length} frames capturados
               </p>
             </div>
-          </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              type="button"
-              onClick={retakeFrames}
-              disabled={isLoading}
-              className="
-                flex items-center justify-center gap-2 px-4 py-3 rounded-lg
-                bg-slate-700/50 text-white font-medium
-                border border-slate-600/50
-                transition-all duration-200
-                hover:bg-slate-700 hover:border-slate-500
-                disabled:opacity-50 disabled:cursor-not-allowed
-              "
-            >
-              <RefreshIcon className="w-4 h-4" />
-              Repetir
-            </button>
-
-            <button
-              type="button"
-              onClick={handleSubmit}
-              disabled={isLoading}
-              className={`
-                flex items-center justify-center gap-2 px-4 py-3 rounded-lg
-                bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-semibold
-                shadow-lg shadow-cyan-500/25
-                transition-all duration-200
-                hover:from-cyan-500 hover:to-blue-500 hover:shadow-cyan-500/40
-                disabled:opacity-50 disabled:cursor-not-allowed
-                ${isLoading ? "cursor-wait" : ""}
-              `}
-            >
-              {isLoading ? (
-                <>
-                  <SpinnerIcon />
-                  Verificando...
-                </>
-              ) : (
-                <>
-                  <CheckCircleIcon className="w-4 h-4" />
-                  Verificar
-                </>
-              )}
-            </button>
+            {/* Frame thumbnails */}
+            <div className="flex gap-2 mt-4">
+              {capturedFrames.map((_, index) => (
+                <div
+                  key={index}
+                  className="w-10 h-10 rounded-lg bg-slate-700 flex items-center justify-center"
+                >
+                  <CheckCircleIcon className="w-5 h-5 text-green-400" />
+                </div>
+              ))}
+            </div>
           </div>
         </div>
-      )}
-
-      {/* Capture error */}
-      {formErrors.capture && (
-        <p
-          className="text-sm text-red-400 flex items-center gap-1"
-          role="alert"
-        >
-          <ErrorIcon />
-          {formErrors.capture}
-        </p>
       )}
     </div>
   );
 }
-
