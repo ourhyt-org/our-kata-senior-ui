@@ -184,7 +184,7 @@ curl --location 'https://dev-api.ourhyt.art/kata/auth/liveness' \
 |---------|---------|
 | **Campo del form** | `frames` (repetido por cada imagen) |
 | **Mínimo de frames** | 2 |
-| **Recomendado** | 5 frames |
+| **Recomendado** | 8 frames |
 | **challengeType** | Se lee del JWT, NO se envía en el form |
 | **Formato de imagen** | JPEG recomendado |
 
@@ -245,7 +245,7 @@ curl --location 'https://dev-api.ourhyt.art/kata/auth/liveness' \
 1. Usuario presiona "Iniciar prueba de vida"
 2. Se abre la cámara frontal
 3. Countdown 3...2...1...
-4. **Ráfaga automática de 5 frames en ~2 segundos**
+4. **Ráfaga automática de 8 frames en ~2 segundos**
 5. Los frames se envían automáticamente a `/kata/auth/liveness`
 6. Se muestra resultado: éxito o error con opción de reintentar
 

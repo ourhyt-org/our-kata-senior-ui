@@ -189,7 +189,7 @@ export async function uploadDocument(
  * IMPORTANT:
  * - The backend expects the field name "frames" repeated for each image
  * - challengeType is NOT sent in the form - it's extracted from the JWT token claim
- * - Minimum 2 frames required, ideally 5 frames for better accuracy
+ * - Minimum 2 frames required, ideally 8 frames for better accuracy
  * - Frames should capture the user performing the requested movement (BLINK or APPROACH)
  * 
  * Frontend uses challengeType (from /start response) only to show appropriate instructions:
