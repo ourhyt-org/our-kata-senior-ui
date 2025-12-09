@@ -761,7 +761,8 @@ export function LivenessStepForm({
       {/* Camera Ready - Waiting to Start */}
       {state === "ready" && (
         <div className="space-y-4">
-          <div className="relative rounded-xl overflow-hidden border border-slate-600/50 bg-black">
+          {/* Enlarged camera container - expanded with negative margins */}
+          <div className="relative rounded-xl overflow-hidden border border-slate-600/50 bg-black -mx-8 sm:-mx-12">
             <div className="aspect-square sm:aspect-[4/3] relative">
               {/* Visible video feed */}
               <video
@@ -824,7 +825,8 @@ export function LivenessStepForm({
       {/* Countdown */}
       {state === "countdown" && (
         <div className="space-y-4">
-          <div className="relative rounded-xl overflow-hidden border border-slate-600/50 bg-black">
+          {/* Enlarged camera container */}
+          <div className="relative rounded-xl overflow-hidden border border-slate-600/50 bg-black -mx-8 sm:-mx-12">
             <div className="aspect-square sm:aspect-[4/3] relative">
               {/* Visible video feed */}
               <video
@@ -857,7 +859,8 @@ export function LivenessStepForm({
       {/* Capturing Burst */}
       {state === "capturing" && (
         <div className="space-y-4">
-          <div className="relative rounded-xl overflow-hidden border border-cyan-500/50 bg-black">
+          {/* Enlarged camera container */}
+          <div className="relative rounded-xl overflow-hidden border border-cyan-500/50 bg-black -mx-8 sm:-mx-12">
             <div className="aspect-square sm:aspect-[4/3] relative">
               {/* Visible video feed */}
               <video
