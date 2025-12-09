@@ -461,7 +461,7 @@ export default function Home() {
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-gradient-radial from-cyan-500/3 to-transparent rounded-full" />
       </div>
 
-      <div className="relative w-full max-w-md">
+      <div className="relative w-full max-w-xl">
         {/* Glow effect behind card */}
         <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500/20 via-blue-500/20 to-cyan-500/20 rounded-2xl blur opacity-50" />
 
