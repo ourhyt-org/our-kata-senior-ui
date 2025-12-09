@@ -19,6 +19,8 @@ interface LivenessStepFormProps {
   onSubmitSuccess: (response: LivenessResponse) => void;
   onRetry: (reason: string) => void;
   onRejected: (reason: string) => void;
+  /** Called when user exhausts all retry attempts (default: 3) */
+  onMaxAttemptsReached: () => void;
 }
 
 interface FormErrors {
@@ -34,11 +36,15 @@ type LivenessState =
   | "countdown"      // 3..2..1 countdown before capture
   | "capturing"      // Capturing burst of frames
   | "submitting"     // Sending frames to API
-  | "error";         // Error state
+  | "error"          // Error state (can retry)
+  | "max_attempts";  // Max attempts reached - must restart from step 1
 
 // ============================================================================
 // Constants
 // ============================================================================
+
+/** Maximum number of liveness verification attempts before resetting to step 1 */
+const MAX_ATTEMPTS = 3;
 
 const BURST_CONFIG = {
   framesCount: 5,
@@ -276,12 +282,14 @@ export function LivenessStepForm({
   onSubmitSuccess,
   onRetry,
   onRejected,
+  onMaxAttemptsReached,
 }: LivenessStepFormProps) {
   const [state, setState] = useState<LivenessState>("idle");
   const [countdown, setCountdown] = useState<number>(0);
   const [captureProgress, setCaptureProgress] = useState<number>(0);
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [capturedFrames, setCapturedFrames] = useState<Blob[]>([]);
+  const [attempts, setAttempts] = useState<number>(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -457,6 +465,15 @@ export function LivenessStepForm({
     }
   }, [stopCamera]);
 
+  // Reset capture state - defined before submitFrames to avoid circular dependency
+  const resetCapture = useCallback(() => {
+    setCapturedFrames([]);
+    setCaptureProgress(0);
+    setCountdown(0);
+    setFormErrors({});
+    setState("idle");
+  }, []);
+
   const submitFrames = useCallback(async (frames: Blob[]) => {
     setState("submitting");
     setFormErrors({});
@@ -468,35 +485,57 @@ export function LivenessStepForm({
         onSubmitSuccess(response);
       } else {
         const reason = response.reason || "No se detectó el movimiento esperado. Por favor, intenta nuevamente.";
+        
+        // Hard rejection from backend - don't allow retries
         if (response.nextStep === "REJECTED") {
           onRejected(reason);
-        } else {
-          setFormErrors({ api: reason });
-          onRetry(reason);
-          resetCapture();
+          return;
         }
+        
+        // Soft failure - check if we have remaining attempts
+        const newAttempts = attempts + 1;
+        setAttempts(newAttempts);
+        
+        if (newAttempts >= MAX_ATTEMPTS) {
+          // Max attempts reached - must restart from step 1
+          setFormErrors({ 
+            api: `Has agotado los ${MAX_ATTEMPTS} intentos permitidos. Debes reiniciar el proceso de autenticación.` 
+          });
+          setState("max_attempts");
+          return;
+        }
+        
+        // Still have attempts left - allow retry
+        setFormErrors({ 
+          api: `${reason} (Intento ${newAttempts} de ${MAX_ATTEMPTS})` 
+        });
+        onRetry(reason);
+        resetCapture();
       }
     } catch (error) {
+      // Network/API error - also counts as an attempt
+      const newAttempts = attempts + 1;
+      setAttempts(newAttempts);
+      
+      let errorMessage = "Error inesperado. Por favor, intenta nuevamente.";
       if (error instanceof AuthApiError) {
-        setFormErrors({
-          api: error.detail || "Error en la verificación de vida. Intenta nuevamente.",
-        });
-      } else {
-        setFormErrors({
-          api: "Error inesperado. Por favor, intenta nuevamente.",
-        });
+        errorMessage = error.detail || "Error en la verificación de vida. Intenta nuevamente.";
       }
+      
+      if (newAttempts >= MAX_ATTEMPTS) {
+        setFormErrors({ 
+          api: `${errorMessage} Has agotado los ${MAX_ATTEMPTS} intentos permitidos.` 
+        });
+        setState("max_attempts");
+        return;
+      }
+      
+      setFormErrors({
+        api: `${errorMessage} (Intento ${newAttempts} de ${MAX_ATTEMPTS})`,
+      });
       setState("error");
     }
-  }, [token, onSubmitSuccess, onRetry, onRejected]);
-
-  const resetCapture = useCallback(() => {
-    setCapturedFrames([]);
-    setCaptureProgress(0);
-    setCountdown(0);
-    setFormErrors({});
-    setState("idle");
-  }, []);
+  }, [token, onSubmitSuccess, onRetry, onRejected, attempts, resetCapture]);
 
   const retryCapture = useCallback(() => {
     resetCapture();
@@ -548,6 +587,32 @@ export function LivenessStepForm({
       {/* Instructions Screen */}
       {state === "idle" && (
         <div className="space-y-6">
+          {/* Show attempts remaining if user has failed before */}
+          {attempts > 0 && (
+            <div className="flex items-center justify-center gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+              <svg className="w-5 h-5 text-amber-400" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+              </svg>
+              <span className="text-sm font-medium text-amber-400">
+                Intento {attempts + 1} de {MAX_ATTEMPTS}
+              </span>
+              <div className="flex gap-1 ml-2">
+                {Array.from({ length: MAX_ATTEMPTS }).map((_, index) => (
+                  <div
+                    key={index}
+                    className={`w-2 h-2 rounded-full ${
+                      index < attempts 
+                        ? "bg-red-400" 
+                        : index === attempts 
+                          ? "bg-amber-400" 
+                          : "bg-slate-600"
+                    }`}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="text-center p-6 rounded-xl border border-slate-600/50 bg-slate-800/30">
             <div className="text-5xl mb-4">{config.icon}</div>
             <h3 className="text-lg font-semibold text-white mb-2">
@@ -587,7 +652,7 @@ export function LivenessStepForm({
             "
           >
             <FaceIcon className="w-5 h-5" />
-            Iniciar prueba de vida
+            {attempts > 0 ? "Reintentar prueba de vida" : "Iniciar prueba de vida"}
           </button>
         </div>
       )}
@@ -868,6 +933,69 @@ export function LivenessStepForm({
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Max Attempts Reached - Must restart from step 1 */}
+      {state === "max_attempts" && (
+        <div className="space-y-6">
+          <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-6">
+            <div className="flex flex-col items-center text-center space-y-4">
+              <div className="p-4 rounded-full bg-red-500/20">
+                <svg
+                  className="w-12 h-12 text-red-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
+                  />
+                </svg>
+              </div>
+              
+              <div className="space-y-2">
+                <h3 className="text-lg font-semibold text-red-400">
+                  Intentos agotados
+                </h3>
+                <p className="text-sm text-slate-300">
+                  Has utilizado los {MAX_ATTEMPTS} intentos disponibles para la prueba de vida.
+                </p>
+                <p className="text-sm text-slate-400">
+                  {formErrors.api || "Por tu seguridad, debes reiniciar el proceso de autenticación desde el inicio."}
+                </p>
+              </div>
+
+              {/* Attempts indicator */}
+              <div className="flex gap-2 mt-2">
+                {Array.from({ length: MAX_ATTEMPTS }).map((_, index) => (
+                  <div
+                    key={index}
+                    className="w-3 h-3 rounded-full bg-red-400"
+                    title={`Intento ${index + 1} fallido`}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={onMaxAttemptsReached}
+            className="
+              w-full inline-flex items-center justify-center gap-2 px-4 py-3.5 rounded-lg
+              bg-gradient-to-r from-slate-600 to-slate-700 text-white font-semibold
+              shadow-lg
+              transition-all duration-200
+              hover:from-slate-500 hover:to-slate-600
+            "
+          >
+            <RefreshIcon className="w-5 h-5" />
+            Reiniciar desde el paso 1
+          </button>
         </div>
       )}
     </div>

@@ -413,6 +413,20 @@ export default function Home() {
     setStep("ERROR");
   }, []);
 
+  const handleLivenessMaxAttempts = useCallback(() => {
+    // Reset all state and go back to step 1
+    setAuthState({
+      token: null,
+      authId: null,
+      challengeType: null,
+      customerName: null,
+      riskScore: null,
+      livenessScore: null,
+    });
+    setLastError(null);
+    setStep("FORM");
+  }, []);
+
   // -------------------------------------------------------------------------
   // Reset Handler
   // -------------------------------------------------------------------------
@@ -505,6 +519,7 @@ export default function Home() {
                 onSubmitSuccess={handleLivenessSuccess}
                 onRetry={handleLivenessRetry}
                 onRejected={handleLivenessRejected}
+                onMaxAttemptsReached={handleLivenessMaxAttempts}
               />
             )}
 
