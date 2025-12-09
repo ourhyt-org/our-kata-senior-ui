@@ -1,19 +1,23 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { uploadDocument, dataURLtoFile, AuthApiError, DocumentResponse } from "@/lib/api";
 
-interface DocumentImages {
-  front: string;
-  back: string;
-}
+// ============================================================================
+// Type Definitions
+// ============================================================================
 
 interface DocumentStepFormProps {
-  onSubmitSuccess: (images: DocumentImages) => void;
+  token: string;
+  onSubmitSuccess: (response: DocumentResponse) => void;
+  onRetake: (reason: string) => void;
+  onRejected: (reason: string) => void;
 }
 
 interface FormErrors {
   camera?: string;
   capture?: string;
+  api?: string;
 }
 
 type CameraState = "idle" | "requesting" | "active" | "error";
@@ -23,6 +27,10 @@ type CaptureStep =
   | "back_capture" 
   | "back_preview" 
   | "review";
+
+// ============================================================================
+// Icons
+// ============================================================================
 
 function CameraIcon({ className }: { className?: string }) {
   return (
@@ -163,6 +171,53 @@ function CaptureIcon({ className }: { className?: string }) {
   );
 }
 
+function ErrorIcon() {
+  return (
+    <svg
+      className="w-4 h-4"
+      fill="currentColor"
+      viewBox="0 0 20 20"
+      aria-hidden="true"
+    >
+      <path
+        fillRule="evenodd"
+        d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
+
+function SpinnerIcon() {
+  return (
+    <svg
+      className="animate-spin h-5 w-5"
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="4"
+      />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+      />
+    </svg>
+  );
+}
+
+// ============================================================================
+// Constants
+// ============================================================================
+
 const CAPTURE_CONFIG = {
   front_capture: {
     title: "Foto frontal de la cédula",
@@ -178,7 +233,16 @@ const CAPTURE_CONFIG = {
   },
 };
 
-export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
+// ============================================================================
+// Component
+// ============================================================================
+
+export function DocumentStepForm({ 
+  token, 
+  onSubmitSuccess, 
+  onRetake, 
+  onRejected 
+}: DocumentStepFormProps) {
   const [cameraState, setCameraState] = useState<CameraState>("idle");
   const [captureStep, setCaptureStep] = useState<CaptureStep>("front_capture");
   const [frontImage, setFrontImage] = useState<string | null>(null);
@@ -306,6 +370,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
     setTempImage(null);
     setCaptureStep("front_capture");
     setCameraState("idle");
+    setFormErrors({});
   }, []);
 
   const retakeBack = useCallback(() => {
@@ -313,6 +378,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
     setTempImage(null);
     setCaptureStep("back_capture");
     setCameraState("idle");
+    setFormErrors({});
   }, []);
 
   useEffect(() => {
@@ -328,19 +394,60 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
     }
   }, [cameraState]);
 
+  /**
+   * Submit document for OCR verification
+   * Only the FRONT image is sent to the backend for Textract processing
+   * The back image is kept for UX purposes but not sent to the API
+   */
   const handleSubmit = async () => {
-    if (!frontImage || !backImage) {
-      setFormErrors({ capture: "Debes capturar ambas fotos del documento" });
+    if (!frontImage) {
+      setFormErrors({ capture: "Debes capturar la foto frontal del documento" });
       return;
     }
 
     setIsLoading(true);
+    setFormErrors({});
 
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    try {
+      // Convert base64 data URL to File for multipart upload
+      const frontFile = dataURLtoFile(frontImage, "document-front.jpg");
 
-    console.log("Documento enviado", { front: frontImage.substring(0, 50), back: backImage.substring(0, 50) });
-    onSubmitSuccess({ front: frontImage, back: backImage });
-    setIsLoading(false);
+      // Call the document verification API - only sends front image
+      // Backend uses Textract OCR to extract and validate document number
+      const response = await uploadDocument(token, frontFile);
+
+      // Handle response based on document status
+      if (response.documentStatus === "OK" && response.docMatch && !response.fraudSuspected) {
+        // Success - document validated, move to liveness
+        onSubmitSuccess(response);
+      } else if (response.documentStatus === "RETAKE" || response.nextStep === "RETAKE_DOCUMENT") {
+        // Need to recapture - quality issues or bad framing
+        const reason = response.reason || "La calidad de la imagen no es suficiente. Por favor, vuelve a capturar el documento.";
+        setFormErrors({ api: reason });
+        onRetake(reason);
+        // Reset to front capture
+        setFrontImage(null);
+        setBackImage(null);
+        setCaptureStep("front_capture");
+        setCameraState("idle");
+      } else if (response.documentStatus === "MISMATCH" || response.fraudSuspected || response.nextStep === "REJECTED") {
+        // Fraud or mismatch detected
+        const reason = response.reason || "El número de documento no coincide con el ingresado. Posible suplantación detectada.";
+        onRejected(reason);
+      }
+    } catch (error) {
+      if (error instanceof AuthApiError) {
+        setFormErrors({
+          api: error.detail || "Error al verificar el documento. Intenta nuevamente.",
+        });
+      } else {
+        setFormErrors({
+          api: "Error inesperado. Por favor, intenta nuevamente.",
+        });
+      }
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const isCapturing = captureStep === "front_capture" || captureStep === "back_capture";
@@ -358,6 +465,24 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
     <div className="space-y-6">
       <canvas ref={canvasRef} className="hidden" />
 
+      {/* API Error Banner */}
+      {formErrors.api && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4">
+          <div className="flex items-start gap-3">
+            <div className="p-1 rounded-full bg-red-500/20 text-red-400">
+              <ErrorIcon />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-red-400">
+                Error de verificación
+              </p>
+              <p className="text-sm text-red-300/80 mt-1">{formErrors.api}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Step indicators */}
       {captureStep !== "review" && (
         <div className="flex justify-center gap-3 mb-4">
           <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
@@ -383,6 +508,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
         </div>
       )}
 
+      {/* Camera idle state */}
       {cameraState === "idle" && isCapturing && (
         <div
           onClick={startCamera}
@@ -434,6 +560,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
         </div>
       )}
 
+      {/* Camera requesting permission */}
       {cameraState === "requesting" && (
         <div className="rounded-xl border border-slate-600/50 bg-slate-800/30 p-8">
           <div className="flex flex-col items-center text-center space-y-4">
@@ -450,6 +577,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
         </div>
       )}
 
+      {/* Camera error state */}
       {cameraState === "error" && (
         <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-6">
           <div className="flex flex-col items-center text-center space-y-4">
@@ -487,6 +615,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
         </div>
       )}
 
+      {/* Camera active - live viewfinder */}
       {cameraState === "active" && isCapturing && (
         <div className="space-y-4">
           <div className="relative rounded-xl overflow-hidden border border-slate-600/50 bg-black">
@@ -499,6 +628,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
                 className="w-full h-full object-cover"
               />
 
+              {/* Frame overlay */}
               <div className="absolute inset-0 pointer-events-none">
                 <div className="absolute inset-6 sm:inset-8 border-2 border-white/30 rounded-lg">
                   <div className="absolute -top-0.5 -left-0.5 w-6 h-6 border-t-2 border-l-2 border-cyan-400 rounded-tl" />
@@ -508,6 +638,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
                 </div>
               </div>
 
+              {/* Top bar with live indicator and badge */}
               <div className="absolute top-3 left-3 right-3 flex justify-between items-center">
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm">
                   <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
@@ -521,6 +652,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
                 </div>
               </div>
 
+              {/* Instruction overlay */}
               <div className="absolute bottom-16 left-0 right-0 flex justify-center">
                 <div className="px-4 py-2 rounded-lg bg-black/60 backdrop-blur-sm">
                   <p className="text-sm text-white text-center">
@@ -530,6 +662,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
               </div>
             </div>
 
+            {/* Capture button */}
             <div className="absolute bottom-4 left-0 right-0 flex justify-center">
               <button
                 type="button"
@@ -548,6 +681,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
             </div>
           </div>
 
+          {/* Tips panel */}
           <div className="flex items-start gap-3 p-3 rounded-lg bg-slate-800/50 border border-slate-700/50">
             <div className="p-1.5 rounded-full bg-cyan-500/20">
               <svg
@@ -576,6 +710,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
         </div>
       )}
 
+      {/* Photo preview - confirm or retake */}
       {isPreviewing && tempImage && (
         <div className="space-y-4">
           <div className="relative rounded-xl overflow-hidden border border-slate-600/50 bg-slate-800/30">
@@ -664,6 +799,7 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
         </div>
       )}
 
+      {/* Review state - both photos captured */}
       {captureStep === "review" && frontImage && backImage && (
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
@@ -731,33 +867,25 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
             <div>
               <p className="text-sm font-medium text-white">¡Fotos capturadas correctamente!</p>
               <p className="text-xs text-slate-400">
-                Puedes continuar o retomar alguna foto si lo necesitas
+                Solo la foto frontal será procesada para verificación OCR
               </p>
             </div>
           </div>
         </div>
       )}
 
+      {/* Capture error */}
       {formErrors.capture && (
         <p
           className="text-sm text-red-400 flex items-center gap-1"
           role="alert"
         >
-          <svg
-            className="w-4 h-4"
-            fill="currentColor"
-            viewBox="0 0 20 20"
-          >
-            <path
-              fillRule="evenodd"
-              d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
-              clipRule="evenodd"
-            />
-          </svg>
+          <ErrorIcon />
           {formErrors.capture}
         </p>
       )}
 
+      {/* Submit button */}
       {captureStep === "review" && (
         <button
           type="button"
@@ -775,27 +903,8 @@ export function DocumentStepForm({ onSubmitSuccess }: DocumentStepFormProps) {
         >
           {isLoading ? (
             <span className="flex items-center justify-center gap-2">
-              <svg
-                className="animate-spin h-5 w-5"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                />
-              </svg>
-              Procesando documento...
+              <SpinnerIcon />
+              Verificando documento...
             </span>
           ) : (
             "Continuar con verificación OCR"

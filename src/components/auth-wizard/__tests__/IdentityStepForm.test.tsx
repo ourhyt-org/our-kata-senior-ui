@@ -1,18 +1,44 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { IdentityStepForm } from "../IdentityStepForm";
+import { startAuth, StartAuthResponse } from "@/lib/api";
 
-const mockConsoleLog = jest.spyOn(console, "log").mockImplementation();
+// Mock the API module
+jest.mock("@/lib/api", () => ({
+  startAuth: jest.fn(),
+  AuthApiError: class AuthApiError extends Error {
+    statusCode: number;
+    detail: string;
+    constructor(message: string, statusCode: number, detail: string) {
+      super(message);
+      this.name = "AuthApiError";
+      this.statusCode = statusCode;
+      this.detail = detail;
+    }
+  },
+}));
+
+const mockStartAuth = startAuth as jest.MockedFunction<typeof startAuth>;
+
+// Default successful API response
+const mockSuccessResponse: StartAuthResponse = {
+  authId: "test-auth-id-123",
+  token: "mock-jwt-token",
+  nextStep: "DOCUMENT",
+  customerStatus: "ACTIVE",
+  riskScore: 0.15,
+  reason: null,
+  name: "Test User",
+  allowedProducts: ["TC_CLASSIC"],
+  challengeType: "BLINK",
+};
 
 describe("IdentityStepForm", () => {
   const mockOnSubmitSuccess = jest.fn();
 
   beforeEach(() => {
     jest.clearAllMocks();
-  });
-
-  afterAll(() => {
-    mockConsoleLog.mockRestore();
+    mockStartAuth.mockResolvedValue(mockSuccessResponse);
   });
 
   describe("Renderizado inicial", () => {
@@ -54,7 +80,7 @@ describe("IdentityStepForm", () => {
 
       await waitFor(() => {
         expect(mockOnSubmitSuccess).toHaveBeenCalled();
-      }, { timeout: 1500 });
+      }, { timeout: 2000 });
     });
 
     it("debe aceptar cédula de 10 dígitos", async () => {
@@ -67,7 +93,7 @@ describe("IdentityStepForm", () => {
 
       await waitFor(() => {
         expect(mockOnSubmitSuccess).toHaveBeenCalled();
-      }, { timeout: 1500 });
+      }, { timeout: 2000 });
     });
 
     it("debe aceptar cédula de 11 dígitos", async () => {
@@ -80,7 +106,7 @@ describe("IdentityStepForm", () => {
 
       await waitFor(() => {
         expect(mockOnSubmitSuccess).toHaveBeenCalled();
-      }, { timeout: 1500 });
+      }, { timeout: 2000 });
     });
 
     it("debe aceptar cédula en formato 123456-12345", async () => {
@@ -93,7 +119,7 @@ describe("IdentityStepForm", () => {
 
       await waitFor(() => {
         expect(mockOnSubmitSuccess).toHaveBeenCalled();
-      }, { timeout: 1500 });
+      }, { timeout: 2000 });
     });
 
     it("debe rechazar cédula con formato inválido (7 dígitos)", async () => {
@@ -155,7 +181,7 @@ describe("IdentityStepForm", () => {
 
       await waitFor(() => {
         expect(mockOnSubmitSuccess).toHaveBeenCalled();
-      }, { timeout: 1500 });
+      }, { timeout: 2000 });
     });
 
     it("debe aceptar teléfono con prefijo +57", async () => {
@@ -168,7 +194,7 @@ describe("IdentityStepForm", () => {
 
       await waitFor(() => {
         expect(mockOnSubmitSuccess).toHaveBeenCalled();
-      }, { timeout: 1500 });
+      }, { timeout: 2000 });
     });
 
     it("debe aceptar teléfono con prefijo 57 sin +", async () => {
@@ -181,7 +207,7 @@ describe("IdentityStepForm", () => {
 
       await waitFor(() => {
         expect(mockOnSubmitSuccess).toHaveBeenCalled();
-      }, { timeout: 1500 });
+      }, { timeout: 2000 });
     });
 
     it("debe aceptar teléfono con espacios", async () => {
@@ -194,7 +220,7 @@ describe("IdentityStepForm", () => {
 
       await waitFor(() => {
         expect(mockOnSubmitSuccess).toHaveBeenCalled();
-      }, { timeout: 1500 });
+      }, { timeout: 2000 });
     });
 
     it("debe aceptar teléfono con paréntesis", async () => {
@@ -207,7 +233,7 @@ describe("IdentityStepForm", () => {
 
       await waitFor(() => {
         expect(mockOnSubmitSuccess).toHaveBeenCalled();
-      }, { timeout: 1500 });
+      }, { timeout: 2000 });
     });
 
     it("debe rechazar teléfono con formato inválido", async () => {
@@ -239,7 +265,7 @@ describe("IdentityStepForm", () => {
   });
 
   describe("Envío exitoso", () => {
-    it("debe llamar onSubmitSuccess con los datos correctos después de validar", async () => {
+    it("debe llamar a la API con los datos correctos", async () => {
       const user = userEvent.setup();
       render(<IdentityStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
 
@@ -248,15 +274,36 @@ describe("IdentityStepForm", () => {
       await user.click(screen.getByRole("button", { name: /iniciar verificación/i }));
 
       await waitFor(() => {
-        expect(mockOnSubmitSuccess).toHaveBeenCalledWith({
-          documentType: "CC",
-          documentNumber: "1234567890",
-          phoneNumber: "3001234567",
-        });
-      }, { timeout: 1500 });
+        expect(mockStartAuth).toHaveBeenCalledWith("CC", "1234567890", "3001234567");
+      }, { timeout: 2000 });
+    });
+
+    it("debe llamar onSubmitSuccess con formData y response después de éxito de API", async () => {
+      const user = userEvent.setup();
+      render(<IdentityStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
+
+      await user.type(screen.getByLabelText(/número de cédula/i), "1234567890");
+      await user.type(screen.getByLabelText(/teléfono celular/i), "3001234567");
+      await user.click(screen.getByRole("button", { name: /iniciar verificación/i }));
+
+      await waitFor(() => {
+        expect(mockOnSubmitSuccess).toHaveBeenCalledWith(
+          {
+            documentType: "CC",
+            documentNumber: "1234567890",
+            phoneNumber: "3001234567",
+          },
+          mockSuccessResponse
+        );
+      }, { timeout: 2000 });
     });
 
     it("debe mostrar estado de loading mientras procesa", async () => {
+      // Make the API call slower to catch the loading state
+      mockStartAuth.mockImplementation(() => 
+        new Promise((resolve) => setTimeout(() => resolve(mockSuccessResponse), 100))
+      );
+
       const user = userEvent.setup();
       render(<IdentityStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
 
@@ -264,13 +311,14 @@ describe("IdentityStepForm", () => {
       await user.type(screen.getByLabelText(/teléfono celular/i), "3109876543");
       await user.click(screen.getByRole("button", { name: /iniciar verificación/i }));
 
-      expect(await screen.findByText(/iniciando/i)).toBeInTheDocument();
+      // "Verificando..." is the loading text
+      expect(await screen.findByText(/verificando/i)).toBeInTheDocument();
 
       expect(screen.getByRole("button")).toBeDisabled();
 
       await waitFor(() => {
         expect(mockOnSubmitSuccess).toHaveBeenCalled();
-      }, { timeout: 1500 });
+      }, { timeout: 2000 });
     });
 
     it("debe deshabilitar los inputs mientras carga", async () => {
@@ -286,22 +334,45 @@ describe("IdentityStepForm", () => {
         expect(screen.getByLabelText(/teléfono celular/i)).toBeDisabled();
       });
     });
+  });
 
-    it("debe hacer console.log con los datos antes de llamar onSubmitSuccess", async () => {
+  describe("Manejo de errores de API", () => {
+    it("debe mostrar error si la API retorna REJECTED", async () => {
+      mockStartAuth.mockResolvedValueOnce({
+        ...mockSuccessResponse,
+        nextStep: "REJECTED",
+        token: "",
+        reason: "Cliente bloqueado por política de seguridad",
+      });
+
       const user = userEvent.setup();
       render(<IdentityStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
 
-      await user.type(screen.getByLabelText(/número de cédula/i), "98765432101");
-      await user.type(screen.getByLabelText(/teléfono celular/i), "3151234567");
+      await user.type(screen.getByLabelText(/número de cédula/i), "1234567890");
+      await user.type(screen.getByLabelText(/teléfono celular/i), "3001234567");
       await user.click(screen.getByRole("button", { name: /iniciar verificación/i }));
 
-      await waitFor(() => {
-        expect(mockConsoleLog).toHaveBeenCalledWith("Pasando a DOCUMENT", {
-          documentType: "CC",
-          documentNumber: "98765432101",
-          phoneNumber: "3151234567",
-        });
-      }, { timeout: 1500 });
+      expect(await screen.findByText(/cliente bloqueado por política de seguridad/i)).toBeInTheDocument();
+      expect(mockOnSubmitSuccess).not.toHaveBeenCalled();
+    });
+
+    it("debe mostrar error genérico si no hay razón", async () => {
+      mockStartAuth.mockResolvedValueOnce({
+        ...mockSuccessResponse,
+        nextStep: "REJECTED",
+        token: "",
+        reason: null,
+      });
+
+      const user = userEvent.setup();
+      render(<IdentityStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
+
+      await user.type(screen.getByLabelText(/número de cédula/i), "1234567890");
+      await user.type(screen.getByLabelText(/teléfono celular/i), "3001234567");
+      await user.click(screen.getByRole("button", { name: /iniciar verificación/i }));
+
+      expect(await screen.findByText(/no fue posible iniciar la autenticación/i)).toBeInTheDocument();
+      expect(mockOnSubmitSuccess).not.toHaveBeenCalled();
     });
   });
 

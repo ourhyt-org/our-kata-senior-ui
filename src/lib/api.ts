@@ -1,0 +1,251 @@
+/**
+ * API Client for the Intelligent Authentication KATA
+ * Base URL: https://dev-api.ourhyt.art
+ * 
+ * This module contains all API calls to the backend authentication service.
+ * All endpoints require specific request formats and return typed responses.
+ */
+
+const API_BASE_URL = "https://dev-api.ourhyt.art";
+
+// ============================================================================
+// Type Definitions
+// ============================================================================
+
+/**
+ * Response from POST /kata/auth/start
+ * Initiates the authentication flow and returns customer info + JWT token
+ */
+export interface StartAuthResponse {
+  authId: string;
+  token: string;
+  nextStep: "DOCUMENT" | "REJECTED";
+  customerStatus: "ACTIVE" | "BLOCKED" | "PENDING";
+  riskScore: number;
+  reason: string | null;
+  name: string;
+  allowedProducts: string[];
+  /** Challenge type for liveness step - determines what movement the user must perform */
+  challengeType: "BLINK" | "APPROACH";
+}
+
+/**
+ * Response from POST /kata/auth/document
+ * Returns OCR validation results for the uploaded document image
+ */
+export interface DocumentResponse {
+  authId: string;
+  qualityScore: number;
+  /** OK = valid, RETAKE = need better image, MISMATCH = document number doesn't match */
+  documentStatus: "OK" | "RETAKE" | "MISMATCH";
+  reason: string | null;
+  nextStep: "LIVENESS" | "RETAKE_DOCUMENT" | "REJECTED";
+  /** Document number extracted via OCR from the image */
+  ocrDocNumber: string;
+  /** Whether OCR number matches the one provided in /start */
+  docMatch: boolean;
+  /** If true, possible identity fraud detected */
+  fraudSuspected: boolean;
+}
+
+/**
+ * Response from POST /kata/auth/liveness
+ * Returns liveness verification results
+ */
+export interface LivenessResponse {
+  authId: string;
+  challengeType: "BLINK" | "APPROACH";
+  /** Liveness confidence score from 0.0 to 1.0 */
+  livenessScore: number;
+  /** Whether the liveness check passed */
+  passed: boolean;
+  reason: string | null;
+  nextStep: "COMPLETED" | "REJECTED";
+}
+
+/**
+ * Generic API error response
+ */
+export interface ApiError {
+  detail?: string;
+  message?: string;
+  reason?: string;
+}
+
+// ============================================================================
+// Custom Error Class
+// ============================================================================
+
+export class AuthApiError extends Error {
+  public statusCode: number;
+  public detail: string;
+
+  constructor(message: string, statusCode: number, detail: string) {
+    super(message);
+    this.name = "AuthApiError";
+    this.statusCode = statusCode;
+    this.detail = detail;
+  }
+}
+
+// ============================================================================
+// API Functions
+// ============================================================================
+
+/**
+ * POST /kata/auth/start
+ * 
+ * Initiates the authentication flow by validating customer identity.
+ * Backend checks customer status, risk score, and returns a JWT token
+ * that must be used for subsequent requests.
+ * 
+ * @param docType - Document type (currently only "CC" for Cédula de Ciudadanía)
+ * @param docNumber - Colombian ID number
+ * @param phone - Colombian mobile phone number (without country code prefix for the API)
+ */
+export async function startAuth(
+  docType: string,
+  docNumber: string,
+  phone: string
+): Promise<StartAuthResponse> {
+  // Clean phone number - API expects plain 10-digit format
+  const cleanPhone = phone.replace(/\D/g, "").slice(-10);
+
+  const response = await fetch(`${API_BASE_URL}/kata/auth/start`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      docType,
+      docNumber: docNumber.replace(/\D/g, ""), // Remove any formatting like hyphens
+      phone: cleanPhone,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorData: ApiError = await response.json().catch(() => ({}));
+    throw new AuthApiError(
+      errorData.detail || errorData.message || "Error al iniciar autenticación",
+      response.status,
+      errorData.reason || errorData.detail || "Error desconocido"
+    );
+  }
+
+  return response.json();
+}
+
+/**
+ * POST /kata/auth/document
+ * 
+ * Uploads the front document image for OCR validation.
+ * Backend uses AWS Textract to extract the document number and validates
+ * it against the number provided in /start (stored in JWT).
+ * 
+ * @param token - JWT token from /start response (used as Bearer token)
+ * @param file - Front document image as File or Blob
+ */
+export async function uploadDocument(
+  token: string,
+  file: File | Blob
+): Promise<DocumentResponse> {
+  const formData = new FormData();
+  // "file" is the expected field name by the backend
+  formData.append("file", file, "document-front.jpg");
+
+  const response = await fetch(`${API_BASE_URL}/kata/auth/document`, {
+    method: "POST",
+    headers: {
+      // JWT token is sent as Bearer token for authentication
+      // Backend extracts user identity from the token claims
+      Authorization: `Bearer ${token}`,
+      // Note: Don't set Content-Type header - browser sets it automatically
+      // with the correct multipart boundary for FormData
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const errorData: ApiError = await response.json().catch(() => ({}));
+    throw new AuthApiError(
+      errorData.detail || errorData.message || "Error al procesar documento",
+      response.status,
+      errorData.reason || errorData.detail || "Error desconocido"
+    );
+  }
+
+  return response.json();
+}
+
+/**
+ * POST /kata/auth/liveness
+ * 
+ * Submits two face frames for liveness verification.
+ * The backend determines the challenge type from the JWT token claim `challenge_type`,
+ * so we don't need to send it in the request body.
+ * 
+ * Frontend uses challengeType only to show appropriate instructions:
+ * - BLINK: "Parpadea dos veces mientras miras a la cámara"
+ * - APPROACH: "Acércate lentamente a la cámara"
+ * 
+ * @param token - JWT token from /start response
+ * @param frame1 - First captured face image
+ * @param frame2 - Second captured face image (after user performs the action)
+ */
+export async function checkLiveness(
+  token: string,
+  frame1: File | Blob,
+  frame2: File | Blob
+): Promise<LivenessResponse> {
+  const formData = new FormData();
+  formData.append("frame1", frame1, "frame1.jpg");
+  formData.append("frame2", frame2, "frame2.jpg");
+
+  const response = await fetch(`${API_BASE_URL}/kata/auth/liveness`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const errorData: ApiError = await response.json().catch(() => ({}));
+    throw new AuthApiError(
+      errorData.detail || errorData.message || "Error en verificación de vida",
+      response.status,
+      errorData.reason || errorData.detail || "Error desconocido"
+    );
+  }
+
+  return response.json();
+}
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
+/**
+ * Converts a base64 data URL to a Blob object for API upload
+ */
+export function dataURLtoBlob(dataURL: string): Blob {
+  const arr = dataURL.split(",");
+  const mimeMatch = arr[0].match(/:(.*?);/);
+  const mime = mimeMatch ? mimeMatch[1] : "image/jpeg";
+  const bstr = atob(arr[1]);
+  let n = bstr.length;
+  const u8arr = new Uint8Array(n);
+  while (n--) {
+    u8arr[n] = bstr.charCodeAt(n);
+  }
+  return new Blob([u8arr], { type: mime });
+}
+
+/**
+ * Converts a base64 data URL to a File object for API upload
+ */
+export function dataURLtoFile(dataURL: string, filename: string): File {
+  const blob = dataURLtoBlob(dataURL);
+  return new File([blob], filename, { type: blob.type });
+}
+

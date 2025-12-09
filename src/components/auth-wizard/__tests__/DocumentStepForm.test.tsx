@@ -34,9 +34,15 @@ const clickActivarCamara = async (user: ReturnType<typeof userEvent.setup>) => {
   }
 };
 
-describe("DocumentStepForm", () => {
-  const mockOnSubmitSuccess = jest.fn();
+// Default props for all tests
+const defaultProps = {
+  token: "mock-jwt-token",
+  onSubmitSuccess: jest.fn(),
+  onRetake: jest.fn(),
+  onRejected: jest.fn(),
+};
 
+describe("DocumentStepForm", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetUserMedia.mockResolvedValue(mockMediaStream);
@@ -48,7 +54,7 @@ describe("DocumentStepForm", () => {
 
   describe("Renderizado inicial", () => {
     it("debe renderizar el estado inicial para captura frontal", () => {
-      render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
+      render(<DocumentStepForm {...defaultProps} />);
 
       expect(screen.getByText(/foto frontal de la cédula/i)).toBeInTheDocument();
       expect(screen.getByText(/captura la parte frontal/i)).toBeInTheDocument();
@@ -56,14 +62,14 @@ describe("DocumentStepForm", () => {
     });
 
     it("debe mostrar los indicadores de paso (Frontal y Reverso)", () => {
-      render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
+      render(<DocumentStepForm {...defaultProps} />);
 
       expect(screen.getByText("Frontal")).toBeInTheDocument();
       expect(screen.getByText("Reverso")).toBeInTheDocument();
     });
 
     it("no debe mostrar el botón de continuar en el estado inicial", () => {
-      render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
+      render(<DocumentStepForm {...defaultProps} />);
 
       expect(screen.queryByRole("button", { name: /continuar con verificación ocr/i })).not.toBeInTheDocument();
     });
@@ -72,7 +78,7 @@ describe("DocumentStepForm", () => {
   describe("Activación de cámara", () => {
     it("debe solicitar permisos de cámara al hacer clic en activar", async () => {
       const user = userEvent.setup();
-      render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
+      render(<DocumentStepForm {...defaultProps} />);
 
       await clickActivarCamara(user);
 
@@ -91,7 +97,7 @@ describe("DocumentStepForm", () => {
     it("debe mostrar estado de solicitud mientras pide permisos", async () => {
       mockGetUserMedia.mockImplementation(() => new Promise(() => {}));
       const user = userEvent.setup();
-      render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
+      render(<DocumentStepForm {...defaultProps} />);
 
       await clickActivarCamara(user);
 
@@ -103,7 +109,7 @@ describe("DocumentStepForm", () => {
       mockGetUserMedia.mockRejectedValue(permissionError);
 
       const user = userEvent.setup();
-      render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
+      render(<DocumentStepForm {...defaultProps} />);
 
       await clickActivarCamara(user);
 
@@ -116,7 +122,7 @@ describe("DocumentStepForm", () => {
       mockGetUserMedia.mockRejectedValue(notFoundError);
 
       const user = userEvent.setup();
-      render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
+      render(<DocumentStepForm {...defaultProps} />);
 
       await clickActivarCamara(user);
 
@@ -128,7 +134,7 @@ describe("DocumentStepForm", () => {
       mockGetUserMedia.mockRejectedValue(genericError);
 
       const user = userEvent.setup();
-      render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
+      render(<DocumentStepForm {...defaultProps} />);
 
       await clickActivarCamara(user);
 
@@ -140,7 +146,7 @@ describe("DocumentStepForm", () => {
       mockGetUserMedia.mockRejectedValueOnce(permissionError).mockResolvedValueOnce(mockMediaStream);
 
       const user = userEvent.setup();
-      render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
+      render(<DocumentStepForm {...defaultProps} />);
 
       await clickActivarCamara(user);
       expect(await screen.findByText(/permiso de cámara denegado/i)).toBeInTheDocument();
@@ -152,7 +158,7 @@ describe("DocumentStepForm", () => {
 
   describe("Flujo de captura", () => {
     it("debe requerir validación de foto frontal antes de pasar al reverso", () => {
-      render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
+      render(<DocumentStepForm {...defaultProps} />);
 
       expect(screen.getByText(/foto frontal de la cédula/i)).toBeInTheDocument();
       expect(screen.queryByText(/foto del reverso/i)).not.toBeInTheDocument();
@@ -161,14 +167,14 @@ describe("DocumentStepForm", () => {
 
   describe("Accesibilidad", () => {
     it("debe tener el contenedor inicial accesible con teclado", () => {
-      render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
+      render(<DocumentStepForm {...defaultProps} />);
 
       const container = screen.getByText(/foto frontal/i).closest("div[role='button']");
       expect(container).toHaveAttribute("tabIndex", "0");
     });
 
     it("debe activar cámara con Enter desde el contenedor", async () => {
-      render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
+      render(<DocumentStepForm {...defaultProps} />);
 
       const container = screen.getByText(/foto frontal/i).closest("div[role='button']");
       
@@ -182,7 +188,7 @@ describe("DocumentStepForm", () => {
     });
 
     it("debe activar cámara con Space desde el contenedor", async () => {
-      render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
+      render(<DocumentStepForm {...defaultProps} />);
 
       const container = screen.getByText(/foto frontal/i).closest("div[role='button']");
       
@@ -197,8 +203,14 @@ describe("DocumentStepForm", () => {
   });
 
   describe("Props", () => {
-    it("debe recibir onSubmitSuccess como prop requerida", () => {
-      const { container } = render(<DocumentStepForm onSubmitSuccess={mockOnSubmitSuccess} />);
+    it("debe recibir todas las props requeridas", () => {
+      const { container } = render(<DocumentStepForm {...defaultProps} />);
+      expect(container).toBeInTheDocument();
+    });
+
+    it("debe recibir token para autenticación", () => {
+      const customProps = { ...defaultProps, token: "custom-token" };
+      const { container } = render(<DocumentStepForm {...customProps} />);
       expect(container).toBeInTheDocument();
     });
   });
