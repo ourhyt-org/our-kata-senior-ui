@@ -1,8 +1,13 @@
 "use client";
 
 import { useState, FormEvent, ChangeEvent } from "react";
+import { startAuth, AuthApiError, StartAuthResponse } from "@/lib/api";
 
-interface IdentityFormData {
+// ============================================================================
+// Type Definitions
+// ============================================================================
+
+export interface IdentityFormData {
   documentType: "CC";
   documentNumber: string;
   phoneNumber: string;
@@ -11,13 +16,20 @@ interface IdentityFormData {
 interface FormErrors {
   documentNumber?: string;
   phoneNumber?: string;
+  api?: string;
 }
 
 interface IdentityStepFormProps {
-  onSubmitSuccess: (data: IdentityFormData) => void;
+  onSubmitSuccess: (data: IdentityFormData, response: StartAuthResponse) => void;
 }
 
+// ============================================================================
+// Validation
+// ============================================================================
+
+// Colombian CC validation: 8, 10, or 11 digits, or format 123456-12345
 const CEDULA_REGEX = /^((\d{8})|(\d{10})|(\d{11})|(\d{6}-\d{5}))$/;
+// Colombian phone: optional +57 prefix, then 10 digits grouped as 3-3-4
 const PHONE_REGEX = /^(\+?57)?\s?\(?(\d{3})\)?\s?(\d{3})\s?(\d{4})$/;
 
 const validateDocumentNumber = (value: string): string | undefined => {
@@ -39,6 +51,57 @@ const validatePhoneNumber = (value: string): string | undefined => {
   }
   return undefined;
 };
+
+// ============================================================================
+// Icons
+// ============================================================================
+
+function ErrorIcon() {
+  return (
+    <svg
+      className="w-4 h-4"
+      fill="currentColor"
+      viewBox="0 0 20 20"
+      aria-hidden="true"
+    >
+      <path
+        fillRule="evenodd"
+        d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
+
+function SpinnerIcon() {
+  return (
+    <svg
+      className="animate-spin h-5 w-5"
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="4"
+      />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+      />
+    </svg>
+  );
+}
+
+// ============================================================================
+// Component
+// ============================================================================
 
 export function IdentityStepForm({ onSubmitSuccess }: IdentityStepFormProps) {
   const [formData, setFormData] = useState<IdentityFormData>({
@@ -66,8 +129,13 @@ export function IdentityStepForm({ onSubmitSuccess }: IdentityStepFormProps) {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
 
+    // Clear field-specific error when user types
     if (formErrors[name as keyof FormErrors]) {
       setFormErrors((prev) => ({ ...prev, [name]: undefined }));
+    }
+    // Clear API error when user makes any change
+    if (formErrors.api) {
+      setFormErrors((prev) => ({ ...prev, api: undefined }));
     }
   };
 
@@ -79,16 +147,62 @@ export function IdentityStepForm({ onSubmitSuccess }: IdentityStepFormProps) {
     }
 
     setIsLoading(true);
+    setFormErrors((prev) => ({ ...prev, api: undefined }));
 
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    try {
+      // Call the backend API to start authentication
+      const response = await startAuth(
+        formData.documentType,
+        formData.documentNumber,
+        formData.phoneNumber
+      );
 
-    console.log("Pasando a DOCUMENT", formData);
-    onSubmitSuccess(formData);
-    setIsLoading(false);
+      // Check if authentication was rejected by the backend
+      if (response.nextStep === "REJECTED" || !response.token) {
+        setFormErrors({
+          api: response.reason || "No fue posible iniciar la autenticación. Por favor, verifica tus datos.",
+        });
+        return;
+      }
+
+      // Success - move to next step
+      onSubmitSuccess(formData, response);
+    } catch (error) {
+      // Handle API errors
+      if (error instanceof AuthApiError) {
+        setFormErrors({
+          api: error.detail || "Error al conectar con el servidor. Intenta nuevamente.",
+        });
+      } else {
+        setFormErrors({
+          api: "Error inesperado. Por favor, intenta nuevamente.",
+        });
+      }
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6" noValidate>
+      {/* API Error Banner */}
+      {formErrors.api && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4">
+          <div className="flex items-start gap-3">
+            <div className="p-1 rounded-full bg-red-500/20">
+              <ErrorIcon />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-red-400">
+                Error de autenticación
+              </p>
+              <p className="text-sm text-red-300/80 mt-1">{formErrors.api}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Document Type (fixed to CC) */}
       <div className="space-y-2">
         <label
           htmlFor="documentType"
@@ -101,6 +215,7 @@ export function IdentityStepForm({ onSubmitSuccess }: IdentityStepFormProps) {
         </div>
       </div>
 
+      {/* Document Number */}
       <div className="space-y-2">
         <label
           htmlFor="documentNumber"
@@ -138,23 +253,13 @@ export function IdentityStepForm({ onSubmitSuccess }: IdentityStepFormProps) {
             className="text-sm text-red-400 flex items-center gap-1"
             role="alert"
           >
-            <svg
-              className="w-4 h-4"
-              fill="currentColor"
-              viewBox="0 0 20 20"
-              aria-hidden="true"
-            >
-              <path
-                fillRule="evenodd"
-                d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
-                clipRule="evenodd"
-              />
-            </svg>
+            <ErrorIcon />
             {formErrors.documentNumber}
           </p>
         )}
       </div>
 
+      {/* Phone Number */}
       <div className="space-y-2">
         <label
           htmlFor="phoneNumber"
@@ -192,23 +297,13 @@ export function IdentityStepForm({ onSubmitSuccess }: IdentityStepFormProps) {
             className="text-sm text-red-400 flex items-center gap-1"
             role="alert"
           >
-            <svg
-              className="w-4 h-4"
-              fill="currentColor"
-              viewBox="0 0 20 20"
-              aria-hidden="true"
-            >
-              <path
-                fillRule="evenodd"
-                d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
-                clipRule="evenodd"
-              />
-            </svg>
+            <ErrorIcon />
             {formErrors.phoneNumber}
           </p>
         )}
       </div>
 
+      {/* Submit Button */}
       <button
         type="submit"
         disabled={isLoading}
@@ -224,28 +319,8 @@ export function IdentityStepForm({ onSubmitSuccess }: IdentityStepFormProps) {
       >
         {isLoading ? (
           <span className="flex items-center justify-center gap-2">
-            <svg
-              className="animate-spin h-5 w-5"
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-            >
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-              />
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-              />
-            </svg>
-            Iniciando...
+            <SpinnerIcon />
+            Verificando...
           </span>
         ) : (
           "Iniciar verificación"
