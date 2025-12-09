@@ -618,7 +618,8 @@ export function DocumentStepForm({
       {/* Camera active - live viewfinder */}
       {cameraState === "active" && isCapturing && (
         <div className="space-y-4">
-          <div className="relative rounded-xl overflow-hidden border border-slate-600/50 bg-black">
+          {/* Enlarged camera container - scale 1.8x with negative margins to fit */}
+          <div className="relative rounded-xl overflow-hidden border border-slate-600/50 bg-black -mx-8 sm:-mx-12">
             <div className="aspect-[4/3] relative">
               <video
                 ref={videoRef}
