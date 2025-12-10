@@ -3,10 +3,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { uploadDocument, dataURLtoFile, AuthApiError, DocumentResponse } from "@/lib/api";
 
-// ============================================================================
-// Type Definitions
-// ============================================================================
-
 interface DocumentStepFormProps {
   token: string;
   onSubmitSuccess: (response: DocumentResponse) => void;
@@ -27,10 +23,6 @@ type CaptureStep =
   | "back_capture" 
   | "back_preview" 
   | "review";
-
-// ============================================================================
-// Icons
-// ============================================================================
 
 function CameraIcon({ className }: { className?: string }) {
   return (
@@ -214,10 +206,6 @@ function SpinnerIcon() {
   );
 }
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 const CAPTURE_CONFIG = {
   front_capture: {
     title: "Foto frontal de la cédula",
@@ -232,10 +220,6 @@ const CAPTURE_CONFIG = {
     icon: IdCardBackIcon,
   },
 };
-
-// ============================================================================
-// Component
-// ============================================================================
 
 export function DocumentStepForm({ 
   token, 
@@ -287,7 +271,6 @@ export function DocumentStepForm({
 
       setCameraState("active");
     } catch (error) {
-      console.error("Error accessing camera:", error);
       setCameraState("error");
       
       if (error instanceof DOMException) {
@@ -390,7 +373,7 @@ export function DocumentStepForm({
   useEffect(() => {
     if (cameraState === "active" && videoRef.current && streamRef.current) {
       videoRef.current.srcObject = streamRef.current;
-      videoRef.current.play()?.catch(console.error);
+      videoRef.current.play()?.catch(() => {});
     }
   }, [cameraState]);
 
@@ -409,29 +392,20 @@ export function DocumentStepForm({
     setFormErrors({});
 
     try {
-      // Convert base64 data URL to File for multipart upload
       const frontFile = dataURLtoFile(frontImage, "document-front.jpg");
-
-      // Call the document verification API - only sends front image
-      // Backend uses Textract OCR to extract and validate document number
       const response = await uploadDocument(token, frontFile);
 
-      // Handle response based on document status
       if (response.documentStatus === "OK" && response.docMatch && !response.fraudSuspected) {
-        // Success - document validated, move to liveness
         onSubmitSuccess(response);
       } else if (response.documentStatus === "RETAKE" || response.nextStep === "RETAKE_DOCUMENT") {
-        // Need to recapture - quality issues or bad framing
         const reason = response.reason || "La calidad de la imagen no es suficiente. Por favor, vuelve a capturar el documento.";
         setFormErrors({ api: reason });
         onRetake(reason);
-        // Reset to front capture
         setFrontImage(null);
         setBackImage(null);
         setCaptureStep("front_capture");
         setCameraState("idle");
       } else if (response.documentStatus === "MISMATCH" || response.fraudSuspected || response.nextStep === "REJECTED") {
-        // Fraud or mismatch detected
         const reason = response.reason || "El número de documento no coincide con el ingresado. Posible suplantación detectada.";
         onRejected(reason);
       }
