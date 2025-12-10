@@ -7,10 +7,6 @@ import {
   LivenessResponse 
 } from "@/lib/api";
 
-// ============================================================================
-// Type Definitions
-// ============================================================================
-
 type ChallengeType = "BLINK" | "APPROACH";
 
 interface LivenessStepFormProps {
@@ -30,32 +26,21 @@ interface FormErrors {
 }
 
 type LivenessState = 
-  | "idle"           // Initial state - show instructions
-  | "requesting"     // Requesting camera permission
-  | "ready"          // Camera active, waiting for user to start
-  | "countdown"      // 3..2..1 countdown before capture
-  | "capturing"      // Capturing burst of frames
-  | "submitting"     // Sending frames to API
-  | "error"          // Error state (can retry)
-  | "max_attempts";  // Max attempts reached - must restart from step 1
+  | "idle"
+  | "requesting"
+  | "ready"
+  | "countdown"
+  | "capturing"
+  | "submitting"
+  | "error"
+  | "max_attempts";
 
-// ============================================================================
-// Constants
-// ============================================================================
-
-/** Maximum number of liveness verification attempts before resetting to step 1 */
 const MAX_ATTEMPTS = 3;
 
 const BURST_CONFIG = {
   framesCount: 8,
   durationMs: 2000,
 } as const;
-
-/**
- * Challenge instructions based on the type from the JWT
- * - BLINK: User must blink while looking at the camera
- * - APPROACH: User must slowly approach the camera
- */
 const CHALLENGE_CONFIG = {
   BLINK: {
     title: "Prueba de parpadeo",
@@ -72,10 +57,6 @@ const CHALLENGE_CONFIG = {
     tip: "Empieza con el rostro alejado y ve acercándote gradualmente durante la captura.",
   },
 };
-
-// ============================================================================
-// Icons
-// ============================================================================
 
 function CameraIcon({ className }: { className?: string }) {
   return (
@@ -219,10 +200,6 @@ function SpinnerIcon({ className }: { className?: string }) {
   );
 }
 
-// ============================================================================
-// Progress Ring Component
-// ============================================================================
-
 function CaptureProgressRing({ 
   progress, 
   framesCount 
@@ -272,10 +249,6 @@ function CaptureProgressRing({
   );
 }
 
-// ============================================================================
-// Component
-// ============================================================================
-
 export function LivenessStepForm({
   token,
   challengeType,
@@ -290,8 +263,6 @@ export function LivenessStepForm({
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [capturedFrames, setCapturedFrames] = useState<Blob[]>([]);
   const [attempts, setAttempts] = useState<number>(0);
-  
-  // useRef to track attempts synchronously (useState is async and causes stale closure issues)
   const attemptsRef = useRef<number>(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -299,10 +270,6 @@ export function LivenessStepForm({
   const streamRef = useRef<MediaStream | null>(null);
 
   const config = CHALLENGE_CONFIG[challengeType];
-
-  // -------------------------------------------------------------------------
-  // Camera Control
-  // -------------------------------------------------------------------------
 
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
@@ -330,14 +297,12 @@ export function LivenessStepForm({
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = stream;
 
-      // Assign stream to video element
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
 
       setState("ready");
     } catch (error) {
-      console.error("Error accessing camera:", error);
       setState("error");
 
       if (error instanceof DOMException) {
@@ -362,24 +327,18 @@ export function LivenessStepForm({
     }
   }, [stopCamera]);
 
-  // Effect to handle video element when stream is available
   useEffect(() => {
     if (streamRef.current && videoRef.current) {
       videoRef.current.srcObject = streamRef.current;
-      videoRef.current.play().catch(console.error);
+      videoRef.current.play().catch(() => {});
     }
   }, [state]);
-
-  // -------------------------------------------------------------------------
-  // Capture Flow
-  // -------------------------------------------------------------------------
 
   const startCountdown = useCallback(() => {
     setCountdown(3);
     setState("countdown");
   }, []);
 
-  // Countdown effect
   useEffect(() => {
     if (state !== "countdown") return;
 
@@ -389,10 +348,8 @@ export function LivenessStepForm({
       }, 1000);
       return () => clearTimeout(timer);
     } else {
-      // Countdown finished, start capturing
       startBurstCapture();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, countdown]);
 
   const startBurstCapture = useCallback(async () => {
@@ -423,14 +380,12 @@ export function LivenessStepForm({
       const frames: Blob[] = [];
 
       for (let i = 0; i < framesCount; i++) {
-        // Mirror the image for selfie experience
         context.save();
         context.translate(canvas.width, 0);
         context.scale(-1, 1);
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
         context.restore();
 
-        // Convert canvas to Blob
         const blob = await new Promise<Blob>((resolve, reject) => {
           canvas.toBlob(
             (blob) => {
@@ -448,7 +403,6 @@ export function LivenessStepForm({
         frames.push(blob);
         setCaptureProgress(((i + 1) / framesCount) * 100);
 
-        // Wait before next capture (except for the last frame)
         if (i < framesCount - 1) {
           await new Promise((resolve) => setTimeout(resolve, intervalMs));
         }
@@ -456,11 +410,8 @@ export function LivenessStepForm({
 
       setCapturedFrames(frames);
       stopCamera();
-      
-      // Auto-submit after capture
       await submitFrames(frames);
-    } catch (error) {
-      console.error("Error during burst capture:", error);
+    } catch {
       setFormErrors({
         capture: "Error durante la captura. Por favor, intenta nuevamente.",
       });
@@ -468,7 +419,6 @@ export function LivenessStepForm({
     }
   }, [stopCamera]);
 
-  // Reset capture state - defined before submitFrames to avoid circular dependency
   const resetCapture = useCallback(() => {
     setCapturedFrames([]);
     setCaptureProgress(0);
@@ -489,28 +439,22 @@ export function LivenessStepForm({
       } else {
         const reason = response.reason || "No se detectó el movimiento esperado. Por favor, intenta nuevamente.";
         
-        // Hard rejection from backend - don't allow retries
         if (response.nextStep === "REJECTED") {
           onRejected(reason);
           return;
         }
         
-        // Soft failure - check if we have remaining attempts
-        // Use ref for synchronous access (useState is async and causes stale closure)
         attemptsRef.current += 1;
         const newAttempts = attemptsRef.current;
-        setAttempts(newAttempts); // Also update state for UI
+        setAttempts(newAttempts);
         
         if (newAttempts >= MAX_ATTEMPTS) {
-          // Max attempts reached - must restart from step 1
           setFormErrors({ 
             api: `Has agotado los ${MAX_ATTEMPTS} intentos permitidos. Debes reiniciar el proceso de autenticación.` 
           });
           setState("max_attempts");
           return;
         }
-        
-        // Still have attempts left - allow retry
         setFormErrors({ 
           api: `${reason} (Intento ${newAttempts} de ${MAX_ATTEMPTS})` 
         });
@@ -518,10 +462,9 @@ export function LivenessStepForm({
         resetCapture();
       }
     } catch (error) {
-      // Network/API error - also counts as an attempt
       attemptsRef.current += 1;
       const newAttempts = attemptsRef.current;
-      setAttempts(newAttempts); // Also update state for UI
+      setAttempts(newAttempts);
       
       let errorMessage = "Error inesperado. Por favor, intenta nuevamente.";
       if (error instanceof AuthApiError) {
@@ -548,23 +491,15 @@ export function LivenessStepForm({
     startCamera();
   }, [resetCapture, startCamera]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       stopCamera();
     };
   }, [stopCamera]);
 
-  // -------------------------------------------------------------------------
-  // Render
-  // -------------------------------------------------------------------------
-
   return (
     <div className="space-y-6">
-      {/* Hidden canvas for frame capture */}
       <canvas ref={canvasRef} className="hidden" />
-      
-      {/* Video element - always in DOM but hidden when not needed */}
       <video
         ref={videoRef}
         autoPlay

@@ -10,10 +10,6 @@ import {
   LivenessResponse,
 } from "@/lib/api";
 
-// ============================================================================
-// Type Definitions
-// ============================================================================
-
 type AuthFlowStep = "FORM" | "DOCUMENT" | "LIVENESS" | "DONE" | "ERROR";
 type ChallengeType = "BLINK" | "APPROACH";
 
@@ -25,10 +21,6 @@ interface AuthState {
   riskScore: number | null;
   livenessScore: number | null;
 }
-
-// ============================================================================
-// Icons
-// ============================================================================
 
 function ShieldIcon() {
   return (
@@ -144,10 +136,6 @@ function LockIcon() {
   );
 }
 
-// ============================================================================
-// Sub-components
-// ============================================================================
-
 function StepBadge({ currentStep, totalSteps }: { currentStep: number; totalSteps: number }) {
   return (
     <div className="inline-flex items-center gap-2 rounded-full bg-cyan-500/10 border border-cyan-500/20 px-3 py-1">
@@ -213,10 +201,6 @@ function getStepNumber(step: AuthFlowStep): number {
   return index >= 0 ? index + 1 : 3;
 }
 
-// ============================================================================
-// Success Screen Component
-// ============================================================================
-
 interface SuccessScreenProps {
   customerName: string | null;
   livenessScore: number | null;
@@ -278,10 +262,6 @@ function SuccessScreen({ customerName, livenessScore, onReset }: SuccessScreenPr
   );
 }
 
-// ============================================================================
-// Error Screen Component
-// ============================================================================
-
 interface ErrorScreenProps {
   errorMessage: string;
   onReset: () => void;
@@ -334,10 +314,6 @@ function ErrorScreen({ errorMessage, onReset }: ErrorScreenProps) {
   );
 }
 
-// ============================================================================
-// Main Component
-// ============================================================================
-
 export default function Home() {
   const [step, setStep] = useState<AuthFlowStep>("FORM");
   const [authState, setAuthState] = useState<AuthState>({
@@ -350,13 +326,8 @@ export default function Home() {
   });
   const [lastError, setLastError] = useState<string | null>(null);
 
-  // -------------------------------------------------------------------------
-  // Step 1: Identity Form Handlers
-  // -------------------------------------------------------------------------
-
   const handleIdentitySubmit = useCallback(
     (_data: IdentityFormData, response: StartAuthResponse) => {
-      // Store auth data from the response
       setAuthState({
         token: response.token,
         authId: response.authId,
@@ -370,30 +341,17 @@ export default function Home() {
     []
   );
 
-  // -------------------------------------------------------------------------
-  // Step 2: Document Capture Handlers
-  // -------------------------------------------------------------------------
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const handleDocumentSuccess = useCallback((response: DocumentResponse) => {
-    // Document verified, move to liveness
-    // Response contains OCR data if needed in the future
+  const handleDocumentSuccess = useCallback((_response: DocumentResponse) => {
     setStep("LIVENESS");
   }, []);
 
-  const handleDocumentRetake = useCallback((reason: string) => {
-    // Stay in document step, show error (handled by component)
-    console.log("Document retake requested:", reason);
+  const handleDocumentRetake = useCallback((_reason: string) => {
   }, []);
 
   const handleDocumentRejected = useCallback((reason: string) => {
     setLastError(reason);
     setStep("ERROR");
   }, []);
-
-  // -------------------------------------------------------------------------
-  // Step 3: Liveness Handlers
-  // -------------------------------------------------------------------------
 
   const handleLivenessSuccess = useCallback((response: LivenessResponse) => {
     setAuthState((prev) => ({
@@ -403,9 +361,7 @@ export default function Home() {
     setStep("DONE");
   }, []);
 
-  const handleLivenessRetry = useCallback((reason: string) => {
-    // Stay in liveness step, show error (handled by component)
-    console.log("Liveness retry requested:", reason);
+  const handleLivenessRetry = useCallback((_reason: string) => {
   }, []);
 
   const handleLivenessRejected = useCallback((reason: string) => {
@@ -414,7 +370,6 @@ export default function Home() {
   }, []);
 
   const handleLivenessMaxAttempts = useCallback(() => {
-    // Reset all state and go back to step 1
     setAuthState({
       token: null,
       authId: null,
@@ -426,10 +381,6 @@ export default function Home() {
     setLastError(null);
     setStep("FORM");
   }, []);
-
-  // -------------------------------------------------------------------------
-  // Reset Handler
-  // -------------------------------------------------------------------------
 
   const handleReset = useCallback(() => {
     setStep("FORM");
@@ -444,17 +395,12 @@ export default function Home() {
     setLastError(null);
   }, []);
 
-  // -------------------------------------------------------------------------
-  // Render
-  // -------------------------------------------------------------------------
-
   const currentConfig = getStepConfig(step, authState.customerName);
   const stepNumber = getStepNumber(step);
   const showStepBadge = step !== "DONE" && step !== "ERROR";
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4 sm:p-6 lg:p-8">
-      {/* Decorative background */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-40 -right-40 w-80 h-80 bg-cyan-500/5 rounded-full blur-3xl" />
         <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-blue-500/5 rounded-full blur-3xl" />
@@ -462,12 +408,9 @@ export default function Home() {
       </div>
 
       <div className="relative w-full max-w-xl">
-        {/* Glow effect behind card */}
         <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500/20 via-blue-500/20 to-cyan-500/20 rounded-2xl blur opacity-50" />
 
-        {/* Main card */}
         <div className="relative bg-slate-900/90 backdrop-blur-xl rounded-2xl border border-slate-700/50 shadow-2xl shadow-black/50 overflow-hidden">
-          {/* Header */}
           <div className="px-6 pt-8 pb-6 border-b border-slate-700/50">
             <div className="flex flex-col items-center text-center space-y-4">
               {showStepBadge && (
@@ -497,7 +440,6 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Content */}
           <div className="px-6 py-6">
             {step === "FORM" && (
               <IdentityStepForm onSubmitSuccess={handleIdentitySubmit} />
@@ -539,7 +481,6 @@ export default function Home() {
             )}
           </div>
 
-          {/* Footer */}
           {step !== "DONE" && step !== "ERROR" && (
             <div className="px-6 pb-6">
               <div className="flex items-center justify-center gap-2 text-xs text-slate-500 border-t border-slate-700/50 pt-6">
@@ -552,7 +493,6 @@ export default function Home() {
           )}
         </div>
 
-        {/* Branding */}
         <div className="mt-6 text-center">
           <p className="text-xs text-slate-600">
             Banco de Bogotá © {new Date().getFullYear()} · Autenticación Segura

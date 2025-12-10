@@ -3,10 +3,6 @@
 import { useState, FormEvent, ChangeEvent } from "react";
 import { startAuth, AuthApiError, StartAuthResponse } from "@/lib/api";
 
-// ============================================================================
-// Type Definitions
-// ============================================================================
-
 export interface IdentityFormData {
   documentType: "CC";
   documentNumber: string;
@@ -23,13 +19,7 @@ interface IdentityStepFormProps {
   onSubmitSuccess: (data: IdentityFormData, response: StartAuthResponse) => void;
 }
 
-// ============================================================================
-// Validation
-// ============================================================================
-
-// Colombian CC validation: 8, 10, or 11 digits, or format 123456-12345
 const CEDULA_REGEX = /^((\d{8})|(\d{10})|(\d{11})|(\d{6}-\d{5}))$/;
-// Colombian phone: optional +57 prefix, then 10 digits grouped as 3-3-4
 const PHONE_REGEX = /^(\+?57)?\s?\(?(\d{3})\)?\s?(\d{3})\s?(\d{4})$/;
 
 const validateDocumentNumber = (value: string): string | undefined => {
@@ -51,10 +41,6 @@ const validatePhoneNumber = (value: string): string | undefined => {
   }
   return undefined;
 };
-
-// ============================================================================
-// Icons
-// ============================================================================
 
 function ErrorIcon() {
   return (
@@ -99,10 +85,6 @@ function SpinnerIcon() {
   );
 }
 
-// ============================================================================
-// Component
-// ============================================================================
-
 export function IdentityStepForm({ onSubmitSuccess }: IdentityStepFormProps) {
   const [formData, setFormData] = useState<IdentityFormData>({
     documentType: "CC",
@@ -129,11 +111,9 @@ export function IdentityStepForm({ onSubmitSuccess }: IdentityStepFormProps) {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
 
-    // Clear field-specific error when user types
     if (formErrors[name as keyof FormErrors]) {
       setFormErrors((prev) => ({ ...prev, [name]: undefined }));
     }
-    // Clear API error when user makes any change
     if (formErrors.api) {
       setFormErrors((prev) => ({ ...prev, api: undefined }));
     }
@@ -150,14 +130,12 @@ export function IdentityStepForm({ onSubmitSuccess }: IdentityStepFormProps) {
     setFormErrors((prev) => ({ ...prev, api: undefined }));
 
     try {
-      // Call the backend API to start authentication
       const response = await startAuth(
         formData.documentType,
         formData.documentNumber,
         formData.phoneNumber
       );
 
-      // Check if authentication was rejected by the backend
       if (response.nextStep === "REJECTED" || !response.token) {
         setFormErrors({
           api: response.reason || "No fue posible iniciar la autenticación. Por favor, verifica tus datos.",
@@ -165,10 +143,8 @@ export function IdentityStepForm({ onSubmitSuccess }: IdentityStepFormProps) {
         return;
       }
 
-      // Success - move to next step
       onSubmitSuccess(formData, response);
     } catch (error) {
-      // Handle API errors
       if (error instanceof AuthApiError) {
         setFormErrors({
           api: error.detail || "Error al conectar con el servidor. Intenta nuevamente.",
@@ -185,7 +161,6 @@ export function IdentityStepForm({ onSubmitSuccess }: IdentityStepFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6" noValidate>
-      {/* API Error Banner */}
       {formErrors.api && (
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4">
           <div className="flex items-start gap-3">
@@ -202,7 +177,6 @@ export function IdentityStepForm({ onSubmitSuccess }: IdentityStepFormProps) {
         </div>
       )}
 
-      {/* Document Type (fixed to CC) */}
       <div className="space-y-2">
         <label
           htmlFor="documentType"
@@ -215,7 +189,6 @@ export function IdentityStepForm({ onSubmitSuccess }: IdentityStepFormProps) {
         </div>
       </div>
 
-      {/* Document Number */}
       <div className="space-y-2">
         <label
           htmlFor="documentNumber"
@@ -259,7 +232,6 @@ export function IdentityStepForm({ onSubmitSuccess }: IdentityStepFormProps) {
         )}
       </div>
 
-      {/* Phone Number */}
       <div className="space-y-2">
         <label
           htmlFor="phoneNumber"
@@ -303,7 +275,6 @@ export function IdentityStepForm({ onSubmitSuccess }: IdentityStepFormProps) {
         )}
       </div>
 
-      {/* Submit Button */}
       <button
         type="submit"
         disabled={isLoading}
